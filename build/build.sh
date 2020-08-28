@@ -1,12 +1,12 @@
 #! /bin/sh
 #
 # nvme-snsd distribute build script
-# 1、编译所有模块，生成结果到output [TODO]
-# 2、在output下建立nvme-snsd-${version} 目录
-# 3、拷贝生成结果到 nvme-snsd-${version} [TODO]
-# 4、压缩nvme-snsd-${version}为zip，删除nvme-snsd-${version}目录
-# 5、建立rpm目录，拷贝nvme-snsd-${version}.zip， *spec
-# 6、执行rpm出包
+# 1、Compile all modules and generate results to output [TODO]
+# 2、Create nvme-snsd-${version} directory under output
+# 3、Copy the generated results to nvme-snsd-${version} [TODO]
+# 4、Compress nvme-snsd-${version} to zip, delete nvme-snsd-${version}
+# 5、Create rpm directory, copy nvme-snsd-${version}.zip, *spec
+# 6、Build rpm package
 #
 cd $(dirname $0)/../
 export VERSION_SNSD=$(sh SNSD-VERSION-GEN)
