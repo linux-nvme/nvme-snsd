@@ -1,0 +1,21 @@
+#! /bin/sh
+
+TOP_DIR=$(dirname $(readlink -f $(dirname $0)))
+echo TOP_DIR_SCRI:$TOP_DIR
+
+OUTPUT_DIR=$TOP_DIR/output
+BUILD_DIR=$TOP_DIR/build
+SCRIPT_DIR=$TOP_DIR/script
+
+# rpm
+RPM_BUILD_DIR=/tmp/nvme-snsd/rpmbuild
+NAME=nvme-snsd
+VERSION=$VERSION_SNSD
+TARGET_BASE_DIR=${NAME}-${VERSION}
+TARGET_DIR=${OUTPUT_DIR}/${TARGET_BASE_DIR}
+TARGET_FILE_NAME=${TARGET_BASE_DIR}.zip
+TARGET_FILE=${OUTPUT_DIR}/${TARGET_BASE_DIR}.zip
+
+
+
+
