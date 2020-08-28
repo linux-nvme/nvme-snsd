@@ -1,10 +1,5 @@
 #! /bin/sh
-#
-# nvme-snsd 出rpm包脚本
-# 1、生成~/.rpmmacros 传递变量给spec
-# 2、在tmp下创建临时rpmbuild的目录，拷贝spec描述文件、nvme-snsd-${version}.zip
-# 3、执行rpmbuild，拷贝rpm到 output，清理临时目录
-#
+
 source $(dirname $0)/snsd_conf.sh
 
 ## Get OS info
