@@ -1,0 +1,14 @@
+[Unit]
+Description=nvme-snsd service
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/nvme-snsd
+RemainAfterExit=yes
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
