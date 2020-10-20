@@ -10,7 +10,7 @@ SNSD = nvme-snsd
 LLDP_TEST = snsd_lldp_test
 NT_TEST = snsd_nt_test
 
-default: $(SNSD) $(LLDP_TEST) $(NT_TEST)
+default: $(SNSD)
 
 SNSD_VERSION=$(shell sh SNSD-VERSION-GEN)
 CFLAGS += -DSNSD_VERSION='"$(SNSD_VERSION)"'
