@@ -34,6 +34,7 @@
 #include "snsd_reg.h"
 #include "snsd_connect.h"
 #include "snsd_switch.h"
+#include "snsd_server.h"
 
 struct switch_port_fd g_port_fd[MAX_PHY_PORT];
 
@@ -45,23 +46,60 @@ void switch_port_init(void)
         switch_fd_init(&g_port_fd[i]);
 }
 
-struct switch_port_fd* switch_get_fd_info(int ifindex)
+static unsigned char switch_get_index(unsigned long * index_map)
+{
+    int i;
+    
+    for (i = 0; i < 64; i++) {    /*64: unsigned long bit length*/
+        if (*index_map & ((unsigned long)1 << i))
+            continue;
+        *index_map |= (unsigned long)1 << i;
+        return i + 1;
+    }
+    return 0;
+}
+
+static void switch_put_index(unsigned long * index_map, unsigned char index)
+{
+    if (index == 0)
+        return;
+    index--;
+    *index_map &= ~((unsigned long)1 << index);
+}
+
+struct switch_port_fd* switch_get_fd_info(int ifindex, unsigned char *index)
 {
     int i, first_free;
     
     for (i = 0, first_free = -1; i < MAX_PHY_PORT; i++) {
         if (g_port_fd[i].ifindex == ifindex) {
+            if (index) {
+                *index = switch_get_index(&g_port_fd[i].index_map);
+                if (*index == 0) {
+                    SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3,
+                        SNSD_LOG_PRINT_CYCLE,
+                        "more than 64 ip address for port ifindex:%d", ifindex);
+                    return NULL;
+                }
+            }
             g_port_fd[i].refs++;
             return &g_port_fd[i];
-        } else if (g_port_fd[i].ifindex < 0 || ((g_port_fd[i].refs <= 0) && (g_port_fd[i].old_time < times_sec())))
+        } else if (g_port_fd[i].ifindex < 0 || ((g_port_fd[i].refs <= 0) &&
+                   (g_port_fd[i].old_time < times_sec())))
             first_free = (first_free != -1) ? first_free : i;
     }
     
     if (first_free == -1) {
-        SNSD_PRINT(SNSD_ERR, "port fd_info exhaused for port ifindex:%d", ifindex);
+        SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
+                         "fd_info exhaused for port ifindex:%d", ifindex);
         return NULL;
     } else {
         g_port_fd[first_free].refs = 1;
+        g_port_fd[first_free].ifindex = ifindex;
+        if (index) {
+            g_port_fd[first_free].index_map = 1;
+            *index = 1;
+        }
         return &g_port_fd[first_free];
     }
 }
@@ -70,11 +108,13 @@ static inline struct switch_port_fd* switch_fd_info_with_index(int index)
     return &g_port_fd[index];
 }
 
-void switch_put_fd_info(struct switch_port_fd *fd_info)
+void switch_put_fd_info(struct switch_port_fd *fd_info, unsigned char index)
 {
     fd_info->refs--;
+    switch_put_index(&fd_info->index_map, index);
     if (fd_info->refs <= 0) {
-        LLDP_DEBUG("delete fd:%d, ifindex:%d, fd_info:%p", fd_info->fd, fd_info->ifindex, fd_info);
+        LLDP_DEBUG("delete fd:%d, ifindex:%d, fd_info:%p",
+                   fd_info->fd, fd_info->ifindex, fd_info);
         if (fd_info->fd >= 0)
             snsd_sock_close(fd_info->fd);
         fd_info->fd = -1;
@@ -82,44 +122,196 @@ void switch_put_fd_info(struct switch_port_fd *fd_info)
     fd_info->old_time = times_sec() + LLDP_OLD_TIME + LLDP_WAIT_OLD_TIME;
 }
 
-void switch_get_fd(struct snsd_port_info *port_info, struct lldp_run_info *lldp_info)
+static void switch_init_port_related_info(struct snsd_port_related_info *info, 
+                                          struct snsd_port_info *port_info, 
+                                          int ifindex)
+{
+    strcpy(info->name, port_info->name);
+    info->family = port_info->family;
+    memcpy(info->ip, port_info->ip, IPV6_ADDR_LENGTH);
+    memcpy(info->mac, port_info->mac, MAC_LENGTH);
+    info->ifindex = ifindex;
+}
+
+int switch_get_fd_data(int ifindex, struct snsd_port_info *port_info,
+                       unsigned char *index)
 {
     struct switch_port_fd *fd_info;
+    struct snsd_port_related_info info;
     int fd;
-    
-    fd_info = switch_get_fd_info(port_info->phy_ifindex);
+    unsigned char temp_index;
+
+    fd_info = switch_get_fd_info(ifindex, index);
     LLDP_DEBUG("get fd_info:%p, ifindex:%d for port:%p, eth name:%s", 
-               fd_info, port_info->phy_ifindex, port_info, port_info->name);
+               fd_info, ifindex, port_info, port_info->name);
     if (fd_info == NULL)
-        return;
+        return -EAGAIN;
+    if (index)
+        temp_index = *index;
+    else
+        temp_index = 0;
+    switch_init_port_related_info(&info, port_info, ifindex);
     if (fd_info->fd < 0) {
-        fd = snsd_get_server_sock(port_info);
-        LLDP_DEBUG("create fd:%d, ifindex:%d, fd_info:%p for port:%p, eth name:%s", 
-                   fd, port_info->phy_ifindex, fd_info, port_info, port_info->name);
+        fd = snsd_get_server_sock(&info);
+        LLDP_DEBUG("create fd:%d, ifindex:%d, fd_info:%p for port:%p, name:%s", 
+                   fd, ifindex, fd_info, port_info, port_info->name);
         if (fd < 0) {
-            switch_put_fd_info(fd_info);
-            return;
+            switch_put_fd_info(fd_info, temp_index);
+            return -EAGAIN;
         }
         fd_info->fd = fd;
     }
     
-    if (snsd_update_sock_ip(fd_info->fd, port_info, SNSD_UPDATE_ADD_IP) != 0) {
-        switch_put_fd_info(fd_info);
-        return;
+    if (snsd_update_sock_ip(fd_info->fd, &info, SNSD_UPDATE_ADD_IP) != 0) {
+        switch_put_fd_info(fd_info, temp_index);
+        return -EAGAIN;
     }
-
-    fd_info->ifindex = port_info->phy_ifindex;
-    lldp_info->fd = fd_info->fd;
-    lldp_info->index = fd_info - g_port_fd;
+    return fd_info - g_port_fd;
 }
 
-void switch_check_lldp_send(struct lldp_run_info *lldp_info, struct snsd_port_info *port_info, time_t now)
+int switch_get_phy_fd(struct snsd_port_info *port_info,
+                   struct lldp_run_info *lldp_info)
 {
+    struct switch_port_fd *fd_info;
+    int ret;
+    unsigned char index;
+
+    ret = switch_get_fd_data(port_info->phy_ifindex, port_info, &index);
+    if (ret >= 0) {
+        lldp_info->index = ret;
+
+        fd_info = switch_fd_info_with_index(ret);
+        lldp_info->fd = fd_info->fd;
+
+        port_info->name_index = index;
+        return 0;
+    }
+    return ret;
+}
+
+static void switch_free_slave_fd(struct snsd_port_info *port_info, 
+                                 struct slave_info *slave)
+{
+    struct switch_port_fd* fd_info;
+    struct snsd_port_related_info info;
+
+    switch_init_port_related_info(&info, port_info, slave->slave_ifindex);
+
+    fd_info = switch_fd_info_with_index(slave->fd_index);
+    (void)snsd_update_sock_ip(fd_info->fd, &info, SNSD_UPDATE_REMOVE_IP);
+    switch_put_fd_info(fd_info, 0);
+    slave->slave_state &= ~STATE_SLAVE_FD_VALID;
+}
+
+int switch_get_bonding_phy_fd(struct snsd_port_info *port_info,
+                   struct lldp_run_info *lldp_info)
+{
+    unsigned char index;
+    struct switch_port_fd *fd_info;
+
+    fd_info = switch_get_fd_info(port_info->phy_ifindex, &index);
+    if (fd_info == NULL)
+        return -EAGAIN;
+    lldp_info->index = fd_info - g_port_fd;
+    port_info->name_index = index;
+    return 0;
+}
+
+int switch_get_bonding_fd(struct snsd_port_info *port_info)
+{
+    struct slave_info *slave = port_info->bonding.slave;
+    struct slave_info **temp = &port_info->bonding.slave;
+    struct slave_info *slave_next;
+    struct switch_port_fd *fd_info;
+    int ret;
+
+    while (slave) {
+        slave_next = slave->slave_next;
+        if (slave->slave_state & STATE_SLAVE_DELETED) {
+            if (slave->slave_state & STATE_SLAVE_FD_VALID)
+                switch_free_slave_fd(port_info, slave);
+            *temp = slave->slave_next;
+            port_info->bonding.slaves_count--;
+            free(slave);
+        } else {
+            temp = &slave->slave_next;
+            if (!(slave->slave_state & STATE_SLAVE_FD_VALID)) {
+                ret = switch_get_fd_data(slave->slave_ifindex, port_info, NULL);
+                if (ret < 0)
+                    break;
+                slave->fd_index = ret;
+                fd_info = switch_fd_info_with_index(ret);
+                slave->fd = fd_info->fd;
+                slave->slave_state |= STATE_SLAVE_FD_VALID;
+            }
+        }
+        slave = slave_next;
+    }
+
+    if (slave) 
+        return -EAGAIN;
+    port_info->bonding.bonding_states &= ~STATE_BONDING_CHANGE;
+    return 0;
+}
+
+
+void switch_get_fd(struct snsd_port_info *port_info,
+                   struct lldp_run_info *lldp_info)
+{
+    int ret;
+    struct switch_port_fd* fd_info;
+    
+    if (!(port_info->bonding.bonding_states & STATE_BONDING_VALID)) {
+        ret = switch_get_phy_fd(port_info, lldp_info);
+    } else {
+        ret = switch_get_bonding_phy_fd(port_info, lldp_info);
+        if (!ret) {
+            ret = switch_get_bonding_fd(port_info);
+            if (ret) {
+                fd_info = switch_fd_info_with_index(lldp_info->index);
+                switch_put_fd_info(fd_info, port_info->name_index);
+            }
+        }
+    }
+    if (!ret)
+        lldp_info->valid = 1;
+}
+
+void snsd_query_zone_for_port(int query_fd, struct snsd_port_info *port)
+{
+    struct snsd_query_zone_tlv query_tlv;
+
+    if (!is_linkup(port->flags))
+        return;
+
+    snsd_build_query_tlv(port, &query_tlv);
+    if (send(query_fd, &query_tlv, sizeof(struct snsd_query_zone_tlv), 0) != sizeof(struct snsd_query_zone_tlv)) {
+        SNSD_PRINT(SNSD_ERR, "Send error:%s for eth name:%s, ip:"SNSD_IPV4STR", fd:%d", 
+            strerror(errno), port->name, SNSD_IPV4_FORMAT(port->ip), query_fd);
+    } else {
+        SNSD_PRINT(SNSD_INFO, "Send query msg for eth %s, ip:"SNSD_IPV4STR", success", 
+            port->name, SNSD_IPV4_FORMAT(port->ip));
+    }
+
+    return;
+}
+
+void switch_check_lldp_send(struct lldp_run_info *lldp_info,
+                            struct snsd_port_info *port_info, time_t now)
+{
+    int ret;
+    
     if (!is_linkup(port_info->flags))
         return;
 
     if (lldp_info->expires <= now) {
-        if (lldp_send(lldp_info->fd, port_info, NULL) == 0)
+        if (port_info->bonding.bonding_states & STATE_BONDING_VALID) {
+            ret = lldp_send_bonding(port_info, NULL);
+        } else {
+            ret = lldp_send(lldp_info->fd, port_info, NULL);
+        }
+            
+        if (ret == 0)
             lldp_info->expires = now + lldp_info->interval_clock;
         else
             lldp_info->expires = now;
@@ -143,22 +335,28 @@ void switch_port_exist_handle(struct snsd_net_info *net_info)
     now = times_sec();
     if (lldp_info->valid) {
         LLDP_DEBUG("treat port:%p eth name:%s, flags:%x, expires:%ld, now:%ld", 
-                   port_info, port_info->name, port_info->flags, lldp_info->expires, now);
-        /* make switch lldp old when modify vlan id but keep ip and eth name same. */
+                   port_info, port_info->name, port_info->flags,
+                   lldp_info->expires, now);
+        if (port_info->bonding.bonding_states & STATE_BONDING_CHANGE) {
+            if (switch_get_bonding_fd(port_info))
+                return;
+        }
+        
+        /* lldp old when modify vlan id but keep ip and eth name same. */
         if (port_info->states & STATE_VLAN_CHANGE)
             lldp_info->expires = now + LLDP_OLD_TIME + LLDP_WAIT_OLD_TIME;
         else
             switch_check_lldp_send(lldp_info, port_info, now);
     } else {
-        lldp_info->fd = -1;
         switch_get_fd(port_info, lldp_info);
-        if (lldp_info->fd >= 0) {
-            lldp_info->valid = 1;
+        if (lldp_info->valid) {
             lldp_info->interval_clock = LLDP_INTERVAL_CLOCK;
             lldp_info->expires = calc_expires_for_new(lldp_info->index, now);
-            LLDP_DEBUG("treat port:%p eth name:%s, flags:%x, expires:%ld, now:%ld", 
-                       port_info, port_info->name, port_info->flags, lldp_info->expires, now);
+            LLDP_DEBUG("treat port:%p name:%s, flags:%x, expires:%ld, now:%ld", 
+                       port_info, port_info->name, port_info->flags,
+                       lldp_info->expires, now);
             switch_check_lldp_send(lldp_info, port_info, now);
+            snsd_query_zone_for_port(lldp_info->fd, port_info);
         }
         /* if can not get fd wait next retry */
     }
@@ -180,19 +378,44 @@ void switch_port_handle_disconnect(struct snsd_net_info *net_info)
         net_info->lldp_info.flags &= ~LLDP_FLAG_DISCONNECT;
 }
 
+static void switch_free_bonding_fd(struct snsd_net_info *net_info)
+{
+    struct slave_info *slave = net_info->port_info.bonding.slave;
+    
+    while(slave) {
+        switch_free_slave_fd(&net_info->port_info, slave);
+        slave = slave->slave_next;
+    }
+}
+
 void switch_port_delete(struct snsd_net_info *net_info)
 {
     struct switch_port_fd* fd_info;
-    
-    LLDP_DEBUG("delete eth:%s, net_info:%p", net_info->port_info.name, net_info);
-    fd_info = switch_fd_info_with_index(net_info->lldp_info.index);
-    (void)snsd_update_sock_ip(fd_info->fd, &net_info->port_info, SNSD_UPDATE_REMOVE_IP);
-    switch_put_fd_info(fd_info);
+    struct snsd_port_related_info info;
+
+    LLDP_DEBUG("delete eth:%s, net_info:%p",
+               net_info->port_info.name, net_info);
+    if (net_info->lldp_info.valid) {
+
+        fd_info = switch_fd_info_with_index(net_info->lldp_info.index);
+
+        if (net_info->port_info.bonding.bonding_states & STATE_BONDING_VALID) {
+            switch_put_fd_info(fd_info, net_info->port_info.name_index);
+            switch_free_bonding_fd(net_info);
+        } else {
+            switch_init_port_related_info(&info, &net_info->port_info,
+                                          net_info->port_info.phy_ifindex);
+            (void)snsd_update_sock_ip(fd_info->fd, &info,
+                                      SNSD_UPDATE_REMOVE_IP);
+            switch_put_fd_info(fd_info, net_info->port_info.name_index);
+        }
+    }
     list_del(&net_info->list);
-    free(net_info);
+    snsd_free_netinfo(net_info);
 }
 
-void switch_port_handle(struct list_head *port_list_head, unsigned int poll_count)
+void switch_port_handle(struct list_head *port_list_head,
+                        unsigned int poll_count)
 {
     struct snsd_net_info *net_info;
     struct snsd_net_info *next_net_info;
@@ -205,7 +428,8 @@ void switch_port_handle(struct list_head *port_list_head, unsigned int poll_coun
         return;
     need_check_lldp = switch_need_check_lldp(count, poll_count);
     
-    list_for_each_entry_safe(net_info, next_net_info, struct snsd_net_info, port_list_head, list) {
+    list_for_each_entry_safe(net_info, next_net_info, struct snsd_net_info,
+                             port_list_head, list) {
         port_info = &net_info->port_info;
         if (port_info->count == poll_count) {
             LLDP_DEBUG("treat net_info:%p, port:%p eth name :%s, flags:%x", 
@@ -216,7 +440,8 @@ void switch_port_handle(struct list_head *port_list_head, unsigned int poll_coun
             
             switch_port_handle_disconnect(net_info);
         } else {
-            ret = snsd_disconnect_by_host_traddr(port_info->family, port_info->ip);
+            ret = snsd_disconnect_by_host_traddr(port_info->family,
+                                                 port_info->ip);
             if (ret == 0)
                 switch_port_delete(net_info);
         }

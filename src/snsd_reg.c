@@ -67,9 +67,10 @@ unsigned int lldp_create_smart_tlv(unsigned char *p,
     smart_tlv->id_length = (unsigned char)nqn_length;
     if (nqn_name != NULL)
         memcpy(smart_tlv->proto_id, nqn_name, nqn_length);
-    
+
+    /* 2 is the length of type_length. */ 
     smart_tlv->type_length = __cpu_to_be16(
-        (LLDP_TYPE_EXTEND << LLDP_TLV_TYPE_SHIFT_LEFT_BIT) | (length - 2)); /* 2 is the length of type_length. */ 
+        (LLDP_TYPE_EXTEND << LLDP_TLV_TYPE_SHIFT_LEFT_BIT) | (length - 2));
     
     return length;
 }
@@ -96,12 +97,26 @@ unsigned int lldp_create_port_id_tlv(unsigned char *p, const char *name)
     return length;
 }
 
+static void lldp_create_port_id(char *port_id, char *name,
+                                unsigned char name_index)
+{
+    int pos;
+    
+    strcpy(port_id, name);
+    
+    pos = strlen(port_id);
+    port_id[pos++] = '_';
+    port_id[pos++] = '0' + name_index / 10 % 10;
+    port_id[pos++] = '0' + name_index % 10;
+    port_id[pos] = '\0';
+}
 
 int lldp_send(int fd, struct snsd_port_info *port_info, const char *nqn_name)
 {
     unsigned char *lldp;
     int offset;
     int ret = 0;
+    char port_id[IFNAMSIZ + 3]; /*_+name_index:3*/
     
     lldp = malloc(LLDP_MAX_LENGTH);
     if (lldp == NULL)
@@ -112,7 +127,8 @@ int lldp_send(int fd, struct snsd_port_info *port_info, const char *nqn_name)
     lldp_init_chassis_id_tlv(lldp + offset, port_info->mac);
     offset += sizeof(struct lldp_chassis_id_tlv);
 
-    offset += lldp_create_port_id_tlv(lldp + offset, port_info->name);
+    lldp_create_port_id(port_id, port_info->name, port_info->name_index);
+    offset += lldp_create_port_id_tlv(lldp + offset, port_id);
     
     lldp_init_time_to_live_tlv(lldp + offset, LLDP_OLD_TIME);
     offset += sizeof(struct lldp_time_to_live_tlv);
@@ -123,12 +139,62 @@ int lldp_send(int fd, struct snsd_port_info *port_info, const char *nqn_name)
     offset += sizeof(struct lldp_end_tlv);
     
     if (send(fd, lldp, offset, 0) != offset) {
-        SNSD_PRINT(SNSD_ERR, "lldp send error %d:%s with port:%p, eth name:%s, fd:%d", 
-                   errno, strerror(errno), port_info, port_info->name, fd);
+        SNSD_PRINT(SNSD_ERR, "LLDP send error:%s for eth name:%s, fd:%d",
+                   strerror(errno), port_info->name, fd);
         ret = -EIO;
     }
     free(lldp);
-    LLDP_DEBUG("lldp send success:port:%p, eth name:%s!", port_info, port_info->name);
+    LLDP_DEBUG("LLDP(%d) send success for port:%p, eth name:%s!", 
+               fd, port_info, port_info->name);
     return ret;
+}
+
+int lldp_send_slave(struct slave_info *slave, struct snsd_port_info *port_info,
+                    const char *nqn_name)
+{
+    int fd;
+    int ret;
+    struct ifreq ifreq;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        SNSD_PRINT(SNSD_ERR, "Socket create failed %s.", strerror(errno));
+        return -EAGAIN;
+    }
+    strcpy(ifreq.ifr_name, slave->slave_name);
+
+    if (ioctl(fd, SIOCGIFFLAGS, &ifreq) < 0) {
+        SNSD_PRINT(SNSD_ERR, "SIOCGIFFLAGS fail: %s.", strerror(errno));
+        close(fd);
+        return -EAGAIN;
+    }
+    close(fd);
+    
+    if (!is_linkup(ifreq.ifr_flags)) {
+        return 0;
+    }
+
+    ret = lldp_send(slave->fd, port_info, nqn_name);
+
+    LLDP_DEBUG("%s of %s send LLDP status:%d.",
+               slave->slave_name, port_info->phy_name, ret);
+    if (ret != 0)
+        SNSD_PRINT(SNSD_ERR, "%s of %s send LLDP failed:%d.",
+                   slave->slave_name, port_info->phy_name, ret);
+    return ret;
+}
+
+int lldp_send_bonding(struct snsd_port_info *port_info, const char *nqn_name)
+{
+    struct slave_info *slave = port_info->bonding.slave;
+    int ret;
+
+    while(slave) {
+        ret = lldp_send_slave(slave, port_info, nqn_name);
+        if (ret != 0)
+            return ret;
+        slave = slave->slave_next;
+    }
+    return 0;
 }
 

@@ -131,6 +131,36 @@ TEST_F(snsd_cfg_ut, cfg_get_net_cfg)
     sleep(1);   // wait 1 seconds to run at least one time.
 }
 
+TEST_F(snsd_cfg_ut, get_base_hostnqn)
+{
+    char *ret;
+
+	ret = snsd_get_base_hostnqn();
+    EXPECT_EQ('\0', *ret);
+
+    sleep(1);   // wait 1 seconds to run at least one time.
+}
+
+TEST_F(snsd_cfg_ut, hostnqn_init)
+{
+    int ret;
+
+	ret = snsd_hostnqn_init();
+    EXPECT_EQ(0, ret);
+
+    sleep(1);   // wait 1 seconds to run at least one time.
+}
+
+TEST_F(snsd_cfg_ut, get_base_info)
+{
+    struct snsd_base_cfg *ret;
+
+	ret = snsd_get_base_info();
+    EXPECT_EQ(&base_cfg, ret);
+
+    sleep(1);   // wait 1 seconds to run at least one time.
+}
+
 TEST_F(snsd_cfg_ut, cfg_exit)
 {
     snsd_cfg_exit();

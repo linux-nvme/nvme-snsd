@@ -104,7 +104,7 @@ void special_process(const char *argv)
     return;
 }
 
-void prot_handle(void)
+void port_handle(void)
 {
     bool quit;
     unsigned int poll_count = SWITCH_POLL_INTEVAL;
@@ -164,7 +164,8 @@ int main(int argc, char *argv[])
         snsd_log_exit();
         return ret;
     }
-    prot_handle();
+
+    port_handle();
 
     snsd_server_exit();
     peon_exit();

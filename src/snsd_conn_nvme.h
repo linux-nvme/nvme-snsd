@@ -36,6 +36,9 @@
 extern "C" {
 #endif  /* __cpluscplus */
 
+/* instance which mean not support */
+#define SNSD_NOT_SUPPORT_PARA (-22)
+
 #define SNSD_NVME_TRADDR_LEN        64
 #define SNSD_NVME_TRANSPORT_LEN     8
 #define SNSD_NVME_TRSVCID_LEN       8
@@ -49,6 +52,7 @@ extern "C" {
 #define SNSD_NVME_TRANSPORT_RDMA    "rdma"
 #define SNSD_NVME_TRANSPORT_TCP     "tcp"
 #define SNSD_NVME_FORMAT_CTRL_ADDDR "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s,hostnqn=%s,nqn=%s"
+#define SNSD_NVME_FORMAT_CTRL_ADDDR_TEST "traddr=0.0.0.0,nqn=nqn.2020-02.123456,transport=rdma"
 #define SNSD_NVME_FORMAT_DISC_ADDR "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s,nqn=%s"
 #define SNSD_NVME_LOG_CTRL_ADDDR    "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s"
 #define SNSD_NVME_CTRL_LOSS_TIMEO   1800 /* 30 minutes of reconnect attempts before giving up */
@@ -66,9 +70,10 @@ struct snsd_nvme_ctx {
     char trsvcid[SNSD_NVME_TRSVCID_LEN];
     char traddr[SNSD_NVME_TRADDR_LEN];
     char host_traddr[SNSD_NVME_TRADDR_LEN];
-    char hostnqn[SNSD_NQN_MAX_LEN];
     char subsysnqn[SNSD_NQN_MAX_LEN];
 
+    enum SNSD_PROTOCOL_E protocol;
+    enum SNSD_MODE_E mode;
     char dname[SNSD_DEVICE_NAME_SIZE];
 };
 
@@ -96,6 +101,9 @@ static inline bool snsd_nvme_ctrl_match_batch(struct snsd_nvme_ctx *ctx1,
         return true;
     return false;
 }
+
+bool snsd_nvme_para_validity_test(char *para_name, char *para_val);
+bool snsd_nvme_noarg_para_validity_test(char *para_name, char *para_val);
 
 #ifdef __cplusplus
 }

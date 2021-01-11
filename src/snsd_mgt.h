@@ -39,11 +39,17 @@
 extern "C" {
 #endif  /* __cpluscplus */
 
+/* BONDING info path */
+#define SNSD_BONDING_FILE_PATH "/sys/class/net/bonding_masters"
+
 /* VLAN info path */
 #define SNSD_VLAN_FILE_PATH "/proc/net/vlan/config"
 
 /* IB protocol dir path */
 #define SNSD_IB_PROTOCOL_PATH "/sys/class/infiniband"
+
+/* net dir path */
+#define SNSD_NET_PATH "/sys/class/net"
 
 /* default IFS */
 #define SNSD_DEFAULT_IFS (128)
@@ -60,6 +66,12 @@ enum snsd_connect {
 
 struct direct_connect_info {
     enum snsd_connect state;
+};
+
+struct snsd_bonding_group {
+    int count;
+    int index[MAX_PHY_PORT];
+    char *bonding_info;
 };
 
 struct snsd_net_info {
@@ -91,13 +103,15 @@ enum snsd_update_ip_event {
 };
 
 int snsd_cfg_net_info(enum SNSD_MODE_E mode, struct list_head *net_info, unsigned int count);
+void snsd_free_netinfo(struct snsd_net_info *net_info);
 
 /* free all of the list */
 void snsd_free_net_list(struct list_head *list_head);
 
-int snsd_get_server_sock(struct snsd_port_info *port);
+int snsd_get_server_sock(struct snsd_port_related_info *port);
 void snsd_sock_close(int sock_fd);
-int snsd_update_sock_ip(int sock_fd, struct snsd_port_info *port, enum snsd_update_ip_event update_type);
+int snsd_update_sock_ip(int sock_fd, struct snsd_port_related_info *port,
+    enum snsd_update_ip_event update_type);
 
 #ifdef __cplusplus
 }

@@ -254,7 +254,8 @@ static unsigned int snsd_lookup_listener_id(int sock_fd)
     return INT_MAX;
 }
 
-static int snsd_update_server_sock(int sock_fd, struct snsd_port_info *port)
+static int snsd_update_server_sock(int sock_fd,
+                                   struct snsd_port_related_info *port)
 {
     struct sockaddr_ll ll_addr;
     socklen_t listen_addr_len = sizeof(ll_addr);
@@ -266,7 +267,7 @@ static int snsd_update_server_sock(int sock_fd, struct snsd_port_info *port)
 
     bzero(&ll_addr, sizeof(ll_addr));
     ll_addr.sll_family = port->family;
-    ll_addr.sll_ifindex = port->phy_ifindex;
+    ll_addr.sll_ifindex = port->ifindex;
     ll_addr.sll_protocol = htons(ETH_NTS_TYPE);
 
     memcpy((void*)&sds_ptr->listener.listener[listener_id].addr,
@@ -394,11 +395,11 @@ int snsd_set_sock_options(int sock_fd, int ifindex)
     return 0;
 }
 
-static int snsd_add_server(int sock_fd, struct snsd_port_info *port)
+static int snsd_add_server(int sock_fd, struct snsd_port_related_info *port)
 {
     int result;
 
-    result = snsd_set_sock_options(sock_fd, port->phy_ifindex);
+    result = snsd_set_sock_options(sock_fd, port->ifindex);
     if (result != 0) {
         SNSD_PRINT(SNSD_ERR, "set sock options failed.");
         return result;
@@ -434,7 +435,7 @@ static int snsd_remove_server(int sock_fd)
     return 0;  
 }
 
-static int snsd_add_server_ip(int sock_fd, struct snsd_port_info *port)
+static int snsd_add_server_ip(int sock_fd, struct snsd_port_related_info *port)
 {
     int idx, i;
     unsigned char host_ip[IPV6_ADDR_LENGTH] = {0};
@@ -447,7 +448,7 @@ static int snsd_add_server_ip(int sock_fd, struct snsd_port_info *port)
 
         for (i = 0; i < SNSD_MAX_IP_PHYPORT; i++) {
             /* check is exist or not */
-            equal = memcmp((void*)sds_ptr->listener.listener[idx].host_ip[i], 
+            equal = memcmp((void*)sds_ptr->listener.listener[idx].host_ip[i].ip, 
                 (void*)port->ip, IPV6_ADDR_LENGTH);
             if (equal == 0) {
                 pthread_mutex_unlock(&sds_ptr->listener.mutex);
@@ -456,10 +457,10 @@ static int snsd_add_server_ip(int sock_fd, struct snsd_port_info *port)
         }
         for (i = 0; i < SNSD_MAX_IP_PHYPORT; i++) {
             /* find out an empty position */
-            equal = memcmp((void*)sds_ptr->listener.listener[idx].host_ip[i], 
+            equal = memcmp((void*)sds_ptr->listener.listener[idx].host_ip[i].ip, 
                 host_ip, IPV6_ADDR_LENGTH);
             if (equal == 0) {
-                memcpy((void*)sds_ptr->listener.listener[idx].host_ip[i], 
+                memcpy((void*)sds_ptr->listener.listener[idx].host_ip[i].ip, 
                     (void*)port->ip, IPV6_ADDR_LENGTH);
                 pthread_mutex_unlock(&sds_ptr->listener.mutex);
                 SNSD_PRINT(SNSD_INFO, "Add sock ip "SNSD_IPV4STR".", 
@@ -474,7 +475,8 @@ static int snsd_add_server_ip(int sock_fd, struct snsd_port_info *port)
     return -ENODEV;
 }
 
-static int snsd_remove_server_ip(int sock_fd, struct snsd_port_info *port)
+static int snsd_remove_server_ip(int sock_fd,
+                                 struct snsd_port_related_info *port)
 {
     int idx, i;
     int equal;
@@ -486,10 +488,10 @@ static int snsd_remove_server_ip(int sock_fd, struct snsd_port_info *port)
 
         for (i = 0; i < SNSD_MAX_IP_PHYPORT; i++) {
             /* check is exist or not */
-            equal = memcmp((void*)sds_ptr->listener.listener[idx].host_ip[i], 
+            equal = memcmp((void*)sds_ptr->listener.listener[idx].host_ip[i].ip, 
                 (void*)port->ip, IPV6_ADDR_LENGTH);
             if (equal == 0) {
-                memset((void*)sds_ptr->listener.listener[idx].host_ip[i], 0, 
+                memset((void*)sds_ptr->listener.listener[idx].host_ip[i].ip, 0, 
                     IPV6_ADDR_LENGTH);
                 pthread_mutex_unlock(&sds_ptr->listener.mutex);
                 return 0;
@@ -503,8 +505,8 @@ static int snsd_remove_server_ip(int sock_fd, struct snsd_port_info *port)
     return 0;
 }
 
-int snsd_update_server(int sock_fd, struct snsd_port_info *port, 
-    enum snsd_sock_event event)
+int snsd_update_server(int sock_fd, struct snsd_port_related_info *port, 
+                       enum snsd_sock_event event)
 {
     int result;
 
@@ -932,15 +934,29 @@ static void snsd_send_ack(int sock_fd, struct sockaddr_ll *server_addr)
   
     return;
 }
-static bool snsd_check_hostip_consistent(const unsigned char *ip, nt_msg *msg)
+
+static bool snsd_check_hostip_consistent(const struct snsd_host_ip *host_ip, nt_msg *msg)
 {
-    if (msg->family == AF_INET) 
-        return snsd_ip_match(AF_INET, ip, msg->nt_msg.ip_tlv.ipv4.dst.ip);
-    
-    return snsd_ip_match(msg->family, ip, msg->nt_msg.ip_tlv.ipv6.dst.ip);
+    bool is_match = false;
+    int i;
+    if (msg->family == AF_INET) {
+        for (i = 0; i < SNSD_MAX_IP_PHYPORT; i++) {
+            is_match = snsd_ip_match(AF_INET, host_ip[i].ip, msg->nt_msg.ip_tlv.ipv4.dst.ip);
+            if (is_match == true)
+                return is_match;
+        }
+        return is_match;
+    }
+
+    for (i = 0; i < SNSD_MAX_IP_PHYPORT; i++) {
+            is_match = snsd_ip_match(msg->family, host_ip[i].ip, msg->nt_msg.ip_tlv.ipv6.dst.ip);
+            if (is_match == true)
+                return is_match;
+    }
+    return is_match;
 }
 
-static void snsd_deal_one_msg(const unsigned char *host_ip, nt_msg *msg)
+static void snsd_deal_one_msg(const struct snsd_host_ip *host_ip, nt_msg *msg)
 {
     bool consistent;
     int post_result;
@@ -953,15 +969,14 @@ static void snsd_deal_one_msg(const unsigned char *host_ip, nt_msg *msg)
                 snsd_build_ack_tlv_info(msg);
         } else
             SNSD_LIMIT_PRINT(SNSD_INFO, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE, 
-                "Host ip inconsistent, host ip:"SNSD_IPV4STR", msg dst ip:"SNSD_IPV4STR, 
-                SNSD_IPV4_FORMAT(host_ip), 
+                "Host ip inconsistent, msg dst ip:"SNSD_IPV4STR, 
                 SNSD_IPV4_FORMAT(msg->nt_msg.ip_tlv.ipv4.dst.ip));    
     } else
         snsd_print_msg(msg);
 }
 
 static void snsd_decode_nt_tlv(const char *buf, int len,
-                               const unsigned char *host_ip)
+                               const struct snsd_host_ip *host_ip)
 {
     nt_msg msg;
     unsigned char root_type;
@@ -1003,7 +1018,7 @@ static void snsd_decode_nt_tlv(const char *buf, int len,
 }
 
 static void snsd_process_nt_msg(struct snsd_nt_rcv_msg *msg, int read_cnt, 
-                                const unsigned char *host_ip)
+                                const struct snsd_host_ip *host_ip)
 {
     int tlv_len, offset;
     int result;
@@ -1050,23 +1065,6 @@ static void snsd_init_ack_msg_buf(void)
     memset((void *)ack_ptr, 0, sizeof(struct snsd_ack_msg_info));
 }
 
-static struct sockaddr_ll *snsd_get_server_by_sock(int fd, unsigned char *ip, bool *drop)
-{
-    for (int i = 0; i < SNSD_MAX_LISTENER; i++) {
-        if (sds_ptr->listener.listener[i].listening_fd == fd) {
-            /* not support multi-ip, so should used host_ip[0] as received ip, 
-                when support muti-ip, the received ip should be contained in 
-                the tlv msg and decode for check consist with local saved ip */
-            memcpy((void *)ip, (void *)sds_ptr->listener.listener[i].host_ip[0], 
-                IPV6_ADDR_LENGTH);
-            *drop = sds_ptr->listener.listener[i].drop_monitor.drop;
-            return  &sds_ptr->listener.listener[i].addr;
-        }
-    }
-
-    return NULL;
-}
-
 static void snsd_listener_msg_inc(int fd)
 {
     for (int i = 0; i < SNSD_MAX_LISTENER; i++) {
@@ -1077,15 +1075,24 @@ static void snsd_listener_msg_inc(int fd)
     }
 }
 
+static struct snsd_listener *snsd_get_server_listener(int fd)
+{
+    for (int i = 0; i < SNSD_MAX_LISTENER; i++) {
+        if (sds_ptr->listener.listener[i].listening_fd == fd) {
+            return  &sds_ptr->listener.listener[i];
+        }
+    }
+
+    return NULL;
+}
+
 void snsd_client_notify(int fd)
 {
     int read_cnt;
-    struct sockaddr_ll *server_addr = NULL;
-    unsigned char host_ip[IPV6_ADDR_LENGTH];
-    bool drop = false;
+    struct snsd_listener *listener;
 
-    server_addr = snsd_get_server_by_sock(fd, host_ip, &drop);
-    if (server_addr == NULL) {
+    listener = snsd_get_server_listener(fd);
+    if (listener == NULL) {
         SNSD_PRINT(SNSD_ERR, "SNSD cannot find listener.listener addr.");
         snsd_drop_msg_inc();
         return;
@@ -1102,17 +1109,68 @@ void snsd_client_notify(int fd)
     snsd_rcv_msg.rcv_buf[read_cnt] = '\0';
 
     /* When a device is detected as attacked, it should be discarded */
-    if (drop == true) {
+    if (listener->drop_monitor.drop == true) {
         SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE, 
             "Under attack, drop msg.");
         snsd_drop_msg_inc();
         return;
     }
-    snsd_build_ack_header(server_addr);
+    snsd_build_ack_header(&listener->addr);
 
-    snsd_process_nt_msg(&snsd_rcv_msg, read_cnt, host_ip);
+    snsd_process_nt_msg(&snsd_rcv_msg, read_cnt, listener->host_ip);
 
-    snsd_send_ack(fd, server_addr);
+    snsd_send_ack(fd, &listener->addr);
+}
+
+void snsd_build_query_msg_head(struct snsd_port_info *port, struct snsd_query_zone_tlv *query_tlv)
+{
+    for (int i = 0; i < ETH_ALEN; i++)
+        query_tlv->eth_hdr.h_dest[i] = mrp_bridge[i];
+
+    memcpy(query_tlv->eth_hdr.h_source, port->mac, ETH_ALEN);
+    query_tlv->eth_hdr.h_proto = htons(ETH_NTS_TYPE);
+
+    query_tlv->nt_header.ver = SNSD_NTF_VER;
+    query_tlv->nt_header.tlv_len = 0;
+    query_tlv->nt_header.reserved0 = 0;
+    query_tlv->nt_header.reserved1 = 0;
+    return;
+}
+
+void snsd_build_query_msg_tlv(struct snsd_port_info *port, struct snsd_query_zone_tlv *query_tlv)
+{
+    unsigned short sub_tlv_len;
+    query_tlv->tl.type = 1 << 5;
+    query_tlv->tl.type |= QUERY_ZONE_TLV;
+
+    if (port->family == AF_INET) {
+        query_tlv->ip_tlv.ipv4.tl.type = NOTIFY_SUB_TLV2_DST_IPV4;
+        query_tlv->ip_tlv.ipv4.tl.len = htons(IPV4_ADDR_LENGTH);
+        memcpy(query_tlv->ip_tlv.ipv4.ip, port->ip, IPV4_ADDR_LENGTH);
+
+        sub_tlv_len = sizeof(sub_tlv_type_ipv4);
+    } else {
+        query_tlv->ip_tlv.ipv6.tl.type = NOTIFY_SUB_TLV4_DST_IPV6;
+        query_tlv->ip_tlv.ipv6.tl.len = htons(IPV6_ADDR_LENGTH);
+        memcpy(query_tlv->ip_tlv.ipv6.ip, port->ip, IPV6_ADDR_LENGTH);
+
+        sub_tlv_len = sizeof(sub_tlv_type_ipv6);
+    }
+
+    query_tlv->tl.len = htons(sub_tlv_len);
+    query_tlv->nt_header.tlv_len = htons(sizeof(tl_info) + sub_tlv_len);
+
+    return;
+}
+
+void snsd_build_query_tlv(struct snsd_port_info *port, struct snsd_query_zone_tlv *query_tlv)
+{
+    memset(query_tlv, 0, sizeof(struct snsd_query_zone_tlv));
+
+    snsd_build_query_msg_head(port, query_tlv);
+    snsd_build_query_msg_tlv(port, query_tlv);
+
+    return;
 }
 
 static void *snsd_msg_rcv(void *arg)
@@ -1171,11 +1229,14 @@ static void snsd_connect_change(nt_msg *msg, unsigned char type)
     param.subsysnqn[SNSD_NQN_MAX_LEN - 1] = '\0';
     param.protocol = msg->nt_msg.ad_info_tlv.ad_info.proto_type;
     param.portid   = msg->nt_msg.ad_info_tlv.ad_info.proto_port;
+    param.mode = SNSD_MODE_SW;
 
     if (type == NOTIFY_HOST_ACTIVE)
         result = snsd_connect(&param);
     else {
-        if (msg->nt_msg.nt_reason_tlv.nt_reason == NOTIFY_REASON_CHANGE_ZONE)
+        if ((msg->nt_msg.nt_reason_tlv.nt_reason == NOTIFY_REASON_CHANGE_ZONE) || 
+            (msg->nt_msg.nt_reason_tlv.nt_reason == NOTIFY_REASON_CHANGE_IP) ||
+            (msg->nt_msg.nt_reason_tlv.nt_reason == NOTIFY_REASON_LLDP_AGE_OUT))
             param.action_flag |= SNSD_DISCONNECT_FORCEDLY;
         result = snsd_disconnect(&param);
     }
@@ -1223,7 +1284,7 @@ static void snsd_listener_state_change(int idx, bool new_flag)
             SNSD_PRINT(SNSD_INFO, 
                 "listener %s , local ip "SNSD_IPV4STR" attack detected.",
                 sds_ptr->listener.listener[idx].if_name, 
-                SNSD_IPV4_FORMAT(sds_ptr->listener.listener[idx].host_ip));
+                SNSD_IPV4_FORMAT(sds_ptr->listener.listener[idx].host_ip[0].ip));
         } else {
             sds_ptr->listener.listener[idx].drop_monitor.drop_interval++;
             if (sds_ptr->listener.listener[idx].drop_monitor.drop_interval > 
@@ -1233,7 +1294,7 @@ static void snsd_listener_state_change(int idx, bool new_flag)
                 SNSD_PRINT(SNSD_INFO, 
                     "listener %s , local ip "SNSD_IPV4STR" recover normal.",
                     sds_ptr->listener.listener[idx].if_name, 
-                    SNSD_IPV4_FORMAT(sds_ptr->listener.listener[idx].host_ip));
+                    SNSD_IPV4_FORMAT(sds_ptr->listener.listener[idx].host_ip[0].ip));
             }
         }
     }
@@ -1309,7 +1370,7 @@ static int snsd_create_worker(void)
     int result;
    
     memset((void *)&attr, 0, sizeof(pthread_attr_t));
-    SNSD_PRINT(SNSD_INFO, "begin to create worker.");
+    SNSD_PRINT(SNSD_INFO, "Begin to create worker.");
     sds_ptr->stop_flag = false;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -1337,6 +1398,7 @@ static int snsd_create_worker(void)
     sds_ptr->thread_info.worker_num++;
     pthread_mutex_unlock(&sds_ptr->thread_info.mutex);
     pthread_attr_destroy(&attr);
+    SNSD_PRINT(SNSD_INFO, "Create worker successfully.");
     return 0;
 }
 

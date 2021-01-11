@@ -84,6 +84,7 @@ void direct_port_handle(list_t *list_head, unsigned int count)
         memset(&connect, 0, sizeof(struct snsd_connect_param));
         connect.protocol = cur_net->port_info.protocol;
         connect.family = cur_net->port_info.family;
+        connect.mode = SNSD_MODE_DC;
         memcpy(connect.traddr, cur_net->port_info.tgtip, IPV6_ADDR_LENGTH);
         memcpy(connect.host_traddr, cur_net->port_info.ip, IPV6_ADDR_LENGTH);
 
@@ -97,10 +98,10 @@ void direct_port_handle(list_t *list_head, unsigned int count)
                     SNSD_IPV4_FORMAT(connect.host_traddr), ret);
 
             list_del(list_net);
-            free(cur_net);
+            snsd_free_netinfo(cur_net);
         } else {
             list_del(list_net);
-            free(cur_net);
+            snsd_free_netinfo(cur_net);
         }
     }
 

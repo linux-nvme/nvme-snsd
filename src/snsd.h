@@ -103,6 +103,8 @@ extern "C" {
 #define SNSD_IPV4_FORMAT(ip) (ip)[0], (ip)[1], (ip)[2], (ip)[3]
 #define SNSD_IPV4STR "%d.%d.%d.%d"
 
+#define SNSD_MAX_SLAVES 32
+#define SNSD_BONDING_SLAVES_FILE_LENGTH (64+(IFNAMSIZ))
 
 /* eth type */
 #define ETH_NTS_TYPE 0x88A7
@@ -132,11 +134,49 @@ enum SNSD_SERVICE_TYPE_E {
 };
 
 enum {
-    STATE_VLAN_CHANGE = 1 << 0          /* bit0(vlan):0(same), 1(change) */
+    STATE_VLAN_CHANGE = 1 << 0,         /* bit0(vlan):0(same), 1(change) */
+    STATE_NEW_PORT = 1 << 1
+};
+
+enum {
+    STATE_BONDING_VALID = 1 << 0,
+    STATE_BONDING_CHANGE = 1 << 1
+};
+
+enum {
+    STATE_SLAVE_FD_VALID = 1 << 0,
+    STATE_SLAVE_DELETED = 1 << 1
+};
+
+struct slave_info {
+    struct slave_info *slave_next;
+    int	slave_ifindex;
+    int fd_index;
+    int fd;
+    unsigned int slave_state;
+    char slave_name[IFNAMSIZ];
+};
+
+#define SLAVES_INFO_SIZE sizeof(struct slaves_info)
+
+struct bonding_info {
+    unsigned int bonding_states;
+    int slaves_count;
+    char *bonding_slaves;
+    struct slave_info *slave;
+};
+
+struct snsd_port_related_info {
+    char name[IFNAMSIZ];            /* Interface name, e.g. "en0".  */
+    unsigned short family;
+    unsigned char ip[IPV6_ADDR_LENGTH];
+    unsigned char mac[MAC_LENGTH];
+    int	ifindex;
 };
 
 struct snsd_port_info {
     char name[IFNAMSIZ];            /* Interface name, e.g. "en0".  */
+    unsigned char name_index;
     unsigned char service_type;
     unsigned short family;
     unsigned char ip[IPV6_ADDR_LENGTH];
@@ -148,8 +188,10 @@ struct snsd_port_info {
     short int vlan;
     short int flags;                /* link status */
     unsigned int count;
-    int	phy_ifindex;
     unsigned int states;
+    int	phy_ifindex;
+    char phy_name[IFNAMSIZ];
+    struct bonding_info bonding;
 };
 
 enum SNSD_DEVICE_ROLE_E {   

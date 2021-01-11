@@ -40,7 +40,7 @@ extern "C" {
 #define LOG_LIMIT_C3 3
 #define SNSD_LOG_PRINT_CYCLE    60
 
-#define LOG_BUFFER_SIZE 256
+#define LOG_BUFFER_SIZE 1024
 
 enum SNSD_DEBUG_LEVEL {
     SNSD_DBG = 0,

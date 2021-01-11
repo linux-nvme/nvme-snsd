@@ -85,7 +85,7 @@ enum {
 };
 
 enum {
-    LLDP_FLAG_DISCONNECT = 1 << 0,   /* bit0(disconnect):0(default), 1(done) */
+    LLDP_FLAG_DISCONNECT = 1 << 0   /* bit0(disconnect):0(default), 1(done) */
 };
 
 #pragma pack(push)
@@ -96,7 +96,8 @@ struct lldp_smart_tlv {
     unsigned char OUI[LLDP_OUI_LENGTH];
     unsigned char sub_type;
     unsigned char version;
-    unsigned char addr_service_type;    /* low 4 bit: ip type, high 4 bit: service type */
+    /* low 4 bit: ip type, high 4 bit: service type */
+    unsigned char addr_service_type;
     unsigned char reserved1[2];    /* 2 reserved for extend */
     unsigned char ip_addr[IPV6_ADDR_LENGTH];
     unsigned char role_type;
@@ -113,7 +114,8 @@ struct lldp_eth_header {
     unsigned short protocol;
 };
 
-#define LLDP_CHASSIS_ID_TLV_LENGTH (MAC_LENGTH + 1)    /* 1 is the length of sub_type */
+/* 1 is the length of sub_type */
+#define LLDP_CHASSIS_ID_TLV_LENGTH (MAC_LENGTH + 1)
 struct lldp_chassis_id_tlv {
     unsigned short type_length;
     unsigned char sub_type;
@@ -139,11 +141,11 @@ struct lldp_end_tlv {
 #pragma pack(pop)
 
 struct lldp_run_info {
-    int fd;
-    unsigned int interval_clock;
-    time_t expires;
-    int index;
     int valid;
+    int fd;
+    time_t expires;
+    unsigned int interval_clock;
+    int index;
     unsigned int flags;      /* bit0(disconnect):0(default), 1(done) */
 };
 
@@ -157,20 +159,26 @@ static inline void lldp_init_eth_header(unsigned char *p, unsigned char *mac)
     eth_header->protocol = __cpu_to_be16(LLDP_PROTOCOL_TYPE);
 }
 
-static inline void lldp_init_chassis_id_tlv(unsigned char *p, unsigned char *mac)
+static inline void lldp_init_chassis_id_tlv(unsigned char *p,
+                                            unsigned char *mac)
 {
     struct lldp_chassis_id_tlv *tlv = (struct lldp_chassis_id_tlv*)p;
-    tlv->type_length = __cpu_to_be16(
-        (LLDP_TYPE_CHASSIS_ID << LLDP_TLV_TYPE_SHIFT_LEFT_BIT) | LLDP_CHASSIS_ID_TLV_LENGTH);
+    unsigned short type_length;
+
+    type_length = (LLDP_TYPE_CHASSIS_ID << LLDP_TLV_TYPE_SHIFT_LEFT_BIT) |
+                  LLDP_CHASSIS_ID_TLV_LENGTH;
+    tlv->type_length = __cpu_to_be16(type_length);
     tlv->sub_type = LLDP_CHASSIS_ID_SUB_TYPE_MAC;
     memcpy(tlv->chassis_id, mac, MAC_LENGTH);
 }
 
-static inline void lldp_init_time_to_live_tlv(unsigned char *p, unsigned short time)
+static inline void lldp_init_time_to_live_tlv(unsigned char *p,
+                                              unsigned short time)
 {
     struct lldp_time_to_live_tlv *tlv = (struct lldp_time_to_live_tlv*)p;
+    /* 2 is the length of time to live. */
     tlv->type_length = __cpu_to_be16(
-        (LLDP_TYPE_TIME_TO_LIVE << LLDP_TLV_TYPE_SHIFT_LEFT_BIT) | 2);    /* 2 is the length of time to live. */
+        (LLDP_TYPE_TIME_TO_LIVE << LLDP_TLV_TYPE_SHIFT_LEFT_BIT) | 2);
     tlv->time_to_live = __cpu_to_be16(time);
 }
 
@@ -181,6 +189,7 @@ static inline void lldp_init_end_tlv(unsigned char *p)
 }
 
 int lldp_send(int fd, struct snsd_port_info *port_info, const char *nqn_name);
+int lldp_send_bonding(struct snsd_port_info *port_info, const char *nqn_name);
 
 #ifdef __cplusplus
 }
