@@ -204,66 +204,25 @@ static int snsd_get_phy_ifname(struct ifreq *ifreq, char *vlan_buff,
     return -EAGAIN;
 }
 
-static int snsd_fill_vlan_and_ifindex(struct snsd_net_info *cur_item,
-                                      char *vlan_buff,
-                                      unsigned int length, int sockfd)
-{
-    unsigned int pos = 0;
-    struct ifreq ifreq;
-    int ret;
-    short int vlan;
-
-    /* file vlan info and init ifr_name */
-    vlan = snsd_fill_vlan(cur_item, vlan_buff, length, &pos);
-    if (vlan == SNSD_INVALID_VLAN) {
-        SNSD_LIMIT_PRINT(SNSD_DBG, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-            "%s with no vlan info.", cur_item->port_info.name);
-        memcpy((void*)ifreq.ifr_name,
-                        cur_item->port_info.name, sizeof(ifreq.ifr_name));
-    } else {
-        ret = snsd_get_phy_ifname(&ifreq, vlan_buff, pos, length);
-        if (ret != 0)
-            return ret;
-    }
-
-    if (cur_item->port_info.vlan != vlan) {
-        if (cur_item->port_info.vlan != SNSD_INVALID_VLAN)
-            cur_item->port_info.states |= STATE_VLAN_CHANGE;
-
-        cur_item->port_info.vlan = vlan;
-    } else
-        cur_item->port_info.states &= ~STATE_VLAN_CHANGE;
-
-    /* get ifnet ifindex */
-    if (ioctl(sockfd, SIOCGIFINDEX, &ifreq) < 0) {
-        SNSD_LIMIT_PRINT(SNSD_INFO, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-            "SIOCGIFINDEX fail: %s.", strerror(errno));
-        return -EAGAIN;
-    }
-    cur_item->port_info.phy_ifindex = ifreq.ifr_ifindex;
-    
-    return 0;
-}
-
-static unsigned int snsd_get_file_length(const char *file_name)
+static int snsd_get_file_length(const char *file_name)
 {
     unsigned int length = 0;
-    FILE *file = NULL;
-    char tmp_buff[SNSD_CFG_VALUE_MAX_LEN + 1] = { 0 };
+    FILE *file;
+    char tmp_buff[SNSD_CFG_VALUE_MAX_LEN + 1];
     unsigned int ret = SNSD_CFG_VALUE_MAX_LEN;
-    char path[PATH_MAX + 1] = { 0 };
+    char path[PATH_MAX + 1];
 
     if (strlen(file_name) > PATH_MAX || realpath(file_name, path) == NULL) {
         SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
             "File path is not right:%s.", strerror(errno));
-        return 0;
+        return -EINVAL;
     }
 
     file = fopen(path, "r");
     if (file == NULL) {
         SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-            "Open vlan file:%s fail.", file_name);
-        return 0;
+            "Open vlan file:%s error:%s.", file_name, strerror(errno));
+        return -EAGAIN;
     }
 
     while (ret == SNSD_CFG_VALUE_MAX_LEN) {
@@ -273,7 +232,7 @@ static unsigned int snsd_get_file_length(const char *file_name)
             SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
                 "read file:%s Fail, ret:%u.", file_name, ferror(file));
             fclose(file);
-            return 0;
+            return -EAGAIN;
         }
         length += ret;
     }
@@ -282,65 +241,316 @@ static unsigned int snsd_get_file_length(const char *file_name)
     return length;
 }
 
-static char *snsd_get_vlan_info(unsigned int *len)
+static int snsd_get_file_info(char *file_name, char ** file_info)
 {
-    FILE *file = NULL;
-    char *vlan_buff = NULL;
+    FILE *file;
+    char *info;
+    int file_length;
     int ret;
-    unsigned int length;
 
-    length = snsd_get_file_length(SNSD_VLAN_FILE_PATH);
-    if (length <= 0) {
+    file_length = snsd_get_file_length(file_name);
+    if (file_length <= 0) {
         SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-            "Get length of vlan file:%s fail.", SNSD_VLAN_FILE_PATH);
-        return NULL;
+            "Get length of file:%s fail.", file_name);
+        return file_length;
     }
 
-    file = fopen(SNSD_VLAN_FILE_PATH, "r");
+    info = (char *)malloc((size_t)(file_length + 1));
+    if (info == NULL) {
+        SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
+            "Malloc buffer fail.");
+        return -EAGAIN;
+    }
+
+    file = fopen(file_name, "r");
     if (file == NULL) {
         SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-            "Open vlan file:%s fail.", SNSD_VLAN_FILE_PATH);
-        return NULL;
+            "Open file:%s error:%s.", file_name, strerror(errno));
+        free(info);
+        return -EAGAIN;
     }
-    
-    vlan_buff = (char *)malloc((size_t)(length + 1));
-    if (vlan_buff == NULL) {
-        fclose(file);
-        SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-            "Malloc vlan_buff Fail.");
-        return NULL;
-    }
-    memset((void*)vlan_buff, 0, (size_t)(length + 1));
 
-    ret = fread(vlan_buff, sizeof(char), (size_t)length, file);
-    if (ferror(file) != 0 || ret != length) {
+    ret = fread(info, sizeof(char), (size_t)file_length, file);
+    if (ferror(file) != 0 || ret != file_length) {
         SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-            "read vlan file Fail, err:%u, ret:%u.", ferror(file), ret);
+            "Read file fail, err:%u, ret:%u.", ferror(file), ret);
         fclose(file);
-        free((void*)vlan_buff);
-        return NULL;
+        free(info);
+        return -EAGAIN;
     }
     fclose(file);
-    vlan_buff[length] = '\0';
-    *len = length;
+    
+    info[file_length] = '\0';
 
-    return vlan_buff;
+    *file_info = info;
+    return file_length;
 }
 
-static int snsd_get_vlan_and_ifindex(struct snsd_net_info *cur_item, int sockfd)
+int snsd_create_slave(int sockfd, char *slave_name, struct bonding_info *info)
 {
-    char *vlan_buff = NULL;
+    struct ifreq ifreq;
+    struct slave_info *slave;
+    
+    if (strlen(slave_name) >= IFNAMSIZ) {
+        SNSD_PRINT(SNSD_ERR, "slave name(%s) too long.", slave_name);
+        return -EAGAIN;
+    }
+
+    strcpy(ifreq.ifr_name, slave_name);
+    if (ioctl(sockfd, SIOCGIFINDEX, &ifreq) < 0) {
+        SNSD_PRINT(SNSD_ERR, "SIOCGIFINDEX fail: %s.", strerror(errno));
+        return -EAGAIN;
+    }
+    
+    slave = malloc(sizeof(*slave));
+    if (slave == NULL) {
+        SNSD_PRINT(SNSD_ERR, "Malloc slave fail.");
+        return -EAGAIN;
+    }
+    slave->slave_ifindex = ifreq.ifr_ifindex;
+    strcpy(slave->slave_name, slave_name);
+    slave->fd = 0;
+    slave->fd_index = 0;
+    slave->slave_state = 0;
+    
+    slave->slave_next = info->slave;
+    info->slave = slave;
+    info->slaves_count++;
+    return 0;
+}
+
+static int snsd_seperate_slaves(char **slave_offset, char *slaves)
+{
+    char *temp;
+    int count = 0;
+
+    slave_offset[0] = slaves;
+    for (temp = slaves; *temp != '\0'; temp++) {
+        if (*temp == ' ' || *temp == '\n') {
+            *temp = '\0';
+            count++;
+            if (count >= SNSD_MAX_SLAVES) {
+                SNSD_PRINT(SNSD_ERR, "Too many slaves.");
+                break;
+            }
+            slave_offset[count] = temp + 1;
+        }
+    }
+    return count;
+}
+
+int snsd_get_slave(int sockfd, struct bonding_info *info, char *slaves)
+{
+    int i;
+    int count;
+    char *slave_offset[SNSD_MAX_SLAVES] = {0};
+    
+    info->bonding_states = STATE_BONDING_VALID | STATE_BONDING_CHANGE;
+    if (slaves) {
+        info->bonding_slaves = malloc(strlen(slaves) + 1);
+        if (info->bonding_slaves == NULL)
+            return -EAGAIN;
+        strcpy(info->bonding_slaves, slaves);
+
+        count = snsd_seperate_slaves(slave_offset, slaves);
+        
+        for(i = 0; i < count; i++) {
+            if (snsd_create_slave(sockfd, slave_offset[i], info)) {
+                free(info->bonding_slaves);
+                info->bonding_slaves = NULL;
+                return -EAGAIN;
+            }
+        }
+    }
+    
+    return 0;
+}
+
+static bool snsd_need_new_slave(char *slave_name, struct slave_info *slave)
+{
+    while(slave) {
+        if (!strcmp(slave_name, slave->slave_name)) {
+            slave->slave_state &= ~STATE_SLAVE_DELETED;
+            return false;
+        }
+        slave = slave->slave_next;
+    }
+    return true;
+}
+
+int snsd_verify_slave(int sockfd, struct bonding_info *info, char *slaves)
+{
+    int i;
+    int count = 0;
+    char *slave_offset[SNSD_MAX_SLAVES] = {0};
+    struct slave_info *slave = info->slave;
+
+    if (slave && info->bonding_slaves && !strcmp(slaves, info->bonding_slaves))
+            return 0;
+    
+    info->bonding_states |= STATE_BONDING_CHANGE;
+    while (slave) {
+        slave->slave_state |= STATE_SLAVE_DELETED;
+        slave = slave->slave_next;
+    }
+
+    if (info->bonding_slaves) {
+        free(info->bonding_slaves);
+        info->bonding_slaves = NULL;
+    }
+    
+    if (slaves) {
+        info->bonding_slaves = malloc(strlen(slaves) + 1);
+        if (info->bonding_slaves == NULL)
+            return -EAGAIN;
+        strcpy(info->bonding_slaves, slaves);
+
+        count = snsd_seperate_slaves(slave_offset, slaves);
+        
+        for(i = 0; i < count; i++) {
+            if (snsd_need_new_slave(slave_offset[i], info->slave)) {
+                if (snsd_create_slave(sockfd, slave_offset[i], info)) {
+                    free(info->bonding_slaves);
+                    info->bonding_slaves = NULL;
+                    return -EAGAIN;
+                }
+            }
+        }
+    }
+    
+    return 0;
+}
+
+static bool snsd_is_bonding(struct snsd_bonding_group *bonding_group,
+                            char *phy_ifname)
+{
+    char *temp;
+    int i;
+    
+    for (i = 0; i < bonding_group->count; i++) {
+        temp = bonding_group->bonding_info + bonding_group->index[i];
+        if (!strcmp(temp, phy_ifname)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int snsd_check_get_slave(int sockfd, struct snsd_net_info *cur_item,
+                                struct snsd_bonding_group *bonding_group,
+                                char *phy_ifname)
+{
+    char file[SNSD_BONDING_SLAVES_FILE_LENGTH];
+    char *slaves = NULL;
     int ret;
-    unsigned int length;
+    int check_change = 0;
+    struct bonding_info *bonding = &cur_item->port_info.bonding;
 
-    vlan_buff = snsd_get_vlan_info(&length);
-    if (vlan_buff == NULL)
-        return -EPERM;
+    if (bonding->bonding_states & STATE_BONDING_VALID)
+        check_change = 1;
+    else if (!snsd_is_bonding(bonding_group, phy_ifname))
+        return 0;
 
-    ret = snsd_fill_vlan_and_ifindex(cur_item, vlan_buff, length, sockfd);
-    free((void*)vlan_buff);
+    snprintf(file, SNSD_BONDING_SLAVES_FILE_LENGTH, "%s/%s/bonding/slaves",
+                SNSD_NET_PATH, phy_ifname);
+    ret = snsd_get_file_info(file, &slaves);
+    if (ret < 0)
+        return -EAGAIN;
+    if (check_change) {
+        ret = snsd_verify_slave(sockfd, bonding, slaves);
+    } else {
+        ret = snsd_get_slave(sockfd, bonding, slaves);
+    }
 
+    if (slaves)
+        free(slaves);
     return ret;
+}
+
+static int snsd_get_mix_info(struct snsd_net_info *cur_item,
+    int sockfd, struct snsd_bonding_group *bonding_group,
+    char* vlan_info, unsigned int vlan_length)
+{
+    unsigned int pos = 0;
+    struct ifreq ifreq;
+    int ret;
+    short int vlan;
+    struct snsd_port_info *port_info = &cur_item->port_info;
+    
+    /* fill vlan info and init ifr_name */
+    vlan = snsd_fill_vlan(cur_item, vlan_info, vlan_length, &pos);
+    if (vlan == SNSD_INVALID_VLAN) {
+        SNSD_LIMIT_PRINT(SNSD_DBG, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
+            "%s with no vlan info.", port_info->name);
+        memcpy(ifreq.ifr_name, port_info->name, sizeof(ifreq.ifr_name));
+    } else {
+        ret = snsd_get_phy_ifname(&ifreq, vlan_info, pos, vlan_length);
+        if (ret != 0)
+            return ret;
+        ret = snsd_check_get_slave(sockfd, cur_item,
+                                   bonding_group,ifreq.ifr_name);
+        if (ret != 0)
+            return ret;
+        memcpy(port_info->phy_name, ifreq.ifr_name,
+               sizeof(port_info->phy_name));
+    }
+
+    if (port_info->vlan != vlan) {
+        if (port_info->vlan != SNSD_INVALID_VLAN)
+            port_info->states |= STATE_VLAN_CHANGE;
+
+        port_info->vlan = vlan;
+    } else
+        port_info->states &= ~STATE_VLAN_CHANGE;
+
+    /* get ifnet ifindex */
+    if (ioctl(sockfd, SIOCGIFINDEX, &ifreq) < 0) {
+        SNSD_LIMIT_PRINT(SNSD_INFO, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
+            "SIOCGIFINDEX fail: %s.", strerror(errno));
+        return -EAGAIN;
+    }
+    port_info->phy_ifindex = ifreq.ifr_ifindex;
+
+    return 0;
+}
+
+static inline int snsd_get_bonding_info(struct snsd_bonding_group *bonding_group)
+{
+    char *bonding_info;
+    int count;
+    int i;
+    int length;
+
+    length = snsd_get_file_info(SNSD_BONDING_FILE_PATH, &bonding_info);
+    if (length < 0)
+        return -EAGAIN;
+
+    count = 0;
+    if (length) {    
+        bonding_group->bonding_info = bonding_info;
+        bonding_group->index[0] = 0;
+        for (i = 0; i < length; i++) {
+            if (bonding_info[i] == ' ' || bonding_info[i] == '\n') {
+                bonding_info[i] = '\0';
+                count++;
+                if (count >= MAX_PHY_PORT) {
+                    SNSD_PRINT(SNSD_ERR, "Too many bondings.");
+                    break;
+                }
+                bonding_group->index[count] = i + 1;
+            }
+        }
+    } else {
+        bonding_group->bonding_info = NULL;
+    }
+    bonding_group->count = count;
+    
+    return 0;
+}
+
+static inline int snsd_get_vlan_info(char **vlan_info)
+{
+    return snsd_get_file_info(SNSD_VLAN_FILE_PATH, vlan_info);
 }
 
 static struct snsd_net_info *snsd_get_new(struct ifreq *ifr)
@@ -366,6 +576,25 @@ static struct snsd_net_info *snsd_get_new(struct ifreq *ifr)
                     (size_t)IFNAMSIZ);
 
     return cur_item;
+}
+
+void snsd_free_netinfo(struct snsd_net_info *net_info)
+{
+    struct slave_info *slave;
+    struct slave_info *temp;
+
+    if (net_info->port_info.bonding.bonding_slaves) {
+        free(net_info->port_info.bonding.bonding_slaves);
+        net_info->port_info.bonding.bonding_slaves = NULL;
+    }
+    slave = net_info->port_info.bonding.slave;
+    while (slave) {
+        temp = slave;
+        slave = slave->slave_next;
+        free(temp);
+    }
+    net_info->port_info.bonding.slave = NULL;
+    free(net_info);
 }
 
 static struct snsd_net_info *snsd_try_find_old(struct list_head *list_head, 
@@ -397,9 +626,12 @@ static struct snsd_net_info *snsd_try_find_old(struct list_head *list_head,
         if (cur_item == NULL)
             return NULL;
 
+    	cur_item->port_info.states |= STATE_NEW_PORT;
         cur_item->port_info.count = count - 1;
         cur_item->port_info.vlan = SNSD_INVALID_VLAN;
         list_add_tail(&cur_item->list, list_head);
+    } else {
+    	cur_item->port_info.states &= ~STATE_NEW_PORT;
     }
     
     return cur_item;
@@ -435,12 +667,36 @@ static int snsd_get_mac_and_flags(struct snsd_net_info *net_info, int sockfd)
     return 0;
 }
 
+static void snsd_free_bonding_info(struct snsd_bonding_group *bonding_group)
+{
+    if (bonding_group->bonding_info)
+        free(bonding_group->bonding_info);
+}
+
 static int snsd_get_net_info(struct list_head *list_head, unsigned int count,
                              int sockfd, struct ifconf *ifc)
 {
     struct ifreq *ifr, *ifend, *ifs;
-    struct snsd_net_info *net_info = NULL;
+    struct snsd_net_info *net_info;
+    struct snsd_bonding_group bonding_group;
+    char *vlan_info;
+    int vlan_length;
     int ret;
+
+    if ((access(SNSD_BONDING_FILE_PATH, F_OK) == 0)) {
+        ret = snsd_get_bonding_info(&bonding_group);
+        if (ret != 0)
+            return ret;
+    } else {
+        bonding_group.bonding_info = NULL;
+        bonding_group.count = 0;
+    }
+
+    vlan_length = snsd_get_vlan_info(&vlan_info);
+    if (vlan_length <= 0) {
+        snsd_free_bonding_info(&bonding_group);
+        return -EAGAIN;
+    }
 
     ifs = ifc->ifc_req;
     ifend = ifs + (ifc->ifc_len / sizeof(struct ifreq));
@@ -451,36 +707,52 @@ static int snsd_get_net_info(struct list_head *list_head, unsigned int count,
             if (net_info == NULL) {
                 SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
                     "Get net_info fail.");
-                return -EAGAIN;
+                ret = -EAGAIN;
+                break;
             }
 
             /* get mac and ifnet flags */
             ret = snsd_get_mac_and_flags(net_info, sockfd);
             if (ret != 0)
-                return ret;
+                break;
 
-            /* get vlan and ifnet ifindex */
-            ret = snsd_get_vlan_and_ifindex(net_info, sockfd);
+            /* get vlan , bonding and ifnet ifindex */
+            ret = snsd_get_mix_info(net_info, sockfd, &bonding_group, 
+                                            vlan_info, vlan_length);
             if (ret != 0)
-                return ret;
-
-            net_info->port_info.protocol = snsd_get_any_protocol();
-
-            /* update count flag */
-            net_info->port_info.count = count;
+                break;
 
             /* vlan must valid */
             if (net_info->port_info.vlan == SNSD_INVALID_VLAN) {
                 SNSD_LIMIT_PRINT(SNSD_DBG, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
                     "host:%u.%u.%u.%u, vlan is invalid.",
                     SNSD_IPV4_FORMAT(net_info->port_info.ip));
-                list_del(&net_info->list);
-                free(net_info);
+                if (net_info->port_info.states & STATE_NEW_PORT) {
+                    list_del(&net_info->list);
+                    snsd_free_netinfo(net_info);
+                }
+            } else {
+                net_info->port_info.protocol = snsd_get_any_protocol();
+                /* update count flag */
+                net_info->port_info.count = count;
             }
         }
     }
 
-    return 0;
+    free(vlan_info);
+    snsd_free_bonding_info(&bonding_group);
+    return ret;
+}
+
+static bool snsd_check_bonding_slave(struct slave_info *slave,
+                                     char *ib_name)
+{
+    while (slave) {
+        if (!strcmp(ib_name, slave->slave_name))
+            return true;
+        slave = slave->slave_next;
+    }
+    return false;
 }
 
 static bool snsd_check_ib_one_port(struct snsd_net_info *cur_net,
@@ -488,7 +760,7 @@ static bool snsd_check_ib_one_port(struct snsd_net_info *cur_net,
 {
     DIR *net_dp;
     struct dirent *net_dirp;
-    int ret;
+    struct bonding_info *bonding;
     
     net_dp = opendir(dir_path);
     if (net_dp == NULL) {
@@ -497,23 +769,22 @@ static bool snsd_check_ib_one_port(struct snsd_net_info *cur_net,
         return false;
     }
 
+    bonding = &cur_net->port_info.bonding;
     while ((net_dirp = readdir(net_dp)) != NULL) {
         if (strcmp(net_dirp->d_name, ".") == 0 ||
             strcmp(net_dirp->d_name, "..") == 0)
             continue;
 
-        ret = strncmp(net_dirp->d_name, cur_net->port_info.name, 
-                        strlen((char*)net_dirp->d_name));
-        if (ret == 0) {
-            if (strlen(net_dirp->d_name) == strlen(cur_net->port_info.name)) {
+        if (bonding->bonding_states & STATE_BONDING_VALID) {
+            if (snsd_check_bonding_slave(bonding->slave, net_dirp->d_name)) {
                 closedir(net_dp);
                 return true;
-            } else if (strlen(net_dirp->d_name) < strlen(cur_net->port_info.name) &&
-                cur_net->port_info.name[strlen(net_dirp->d_name)] == '.') {
+            }
+        } else {
+            if (!strcmp(net_dirp->d_name, cur_net->port_info.phy_name)) {
                 closedir(net_dp);
                 return true;
-            } else
-                continue;
+            }
         }
     }
     closedir(net_dp);
@@ -526,6 +797,20 @@ static bool snsd_protocol_ib(struct snsd_net_info *cur_net)
     DIR *dp;
     struct dirent *dirp;
     char dir_path[SNSD_CFG_VALUE_MAX_LEN + 1];
+    struct bonding_info *bonding = &cur_net->port_info.bonding;
+    int count = 0;
+    int ret;
+
+    if (!(cur_net->port_info.states & STATE_NEW_PORT)) {
+        if (!(bonding->bonding_states & STATE_BONDING_VALID)) 
+            return true;
+        if (!(bonding->bonding_states & STATE_BONDING_CHANGE))
+            return true;
+    }
+    
+    if ((bonding->bonding_states & STATE_BONDING_VALID) &&
+        !bonding->slaves_count)
+        return false;
 
     dp = opendir(SNSD_IB_PROTOCOL_PATH);
     if (dp == NULL) {
@@ -541,13 +826,22 @@ static bool snsd_protocol_ib(struct snsd_net_info *cur_net)
         memset(dir_path, 0, SNSD_CFG_VALUE_MAX_LEN + 1);
         snprintf(dir_path, SNSD_CFG_VALUE_MAX_LEN, "%s/%s/device/net",
                         SNSD_IB_PROTOCOL_PATH, dirp->d_name);
-        
-        if (snsd_check_ib_one_port(cur_net, dir_path) == true) {
-            closedir(dp);
-            return true;
+
+        ret = snsd_check_ib_one_port(cur_net, dir_path);
+        if (ret != 0) {
+            count++;
+            if (!(bonding->bonding_states & STATE_BONDING_VALID) ||
+                count >= bonding->slaves_count) {
+                closedir(dp);
+                return true;
+            }
         }
     }
     closedir(dp);
+
+    SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
+        "Host:"SNSD_IPV4STR", ib protocol check failed.", 
+        SNSD_IPV4_FORMAT(cur_net->port_info.ip));
 
     return false;
 }
@@ -616,7 +910,7 @@ static int snsd_all_net_info(struct list_head *net_info, unsigned int count)
     return ret;
 }
 
-static void snsd_protocol_handle(struct list_head *net_info)
+static void snsd_protocol_handle(struct list_head *net_info, unsigned int count)
 {
     struct list_head *list_net = NULL;
     struct list_head *net_tmp = NULL;
@@ -628,6 +922,10 @@ static void snsd_protocol_handle(struct list_head *net_info)
     list_for_each_safe(list_net, net_tmp, net_info) {
         cur_net = (struct snsd_net_info *)list_entry(list_net,
                         struct snsd_net_info, list);
+
+        if (cur_net->port_info.count != count)
+            continue;
+        
         /* not config protocol, default roce */
         if (cur_net->port_info.protocol == 0)
             cur_net->port_info.protocol = SNSD_PROTOCOL_ROCE;
@@ -646,15 +944,21 @@ static void snsd_protocol_handle(struct list_head *net_info)
         if (flag == false) {
             SNSD_PRINT(SNSD_DBG, "host:%u.%u.%u.%u, protocol check failed.",
                     SNSD_IPV4_FORMAT(cur_net->port_info.ip));
-            list_del(list_net);
-            free(cur_net);
+            if (cur_net->port_info.states & STATE_NEW_PORT) {
+                list_del(list_net);
+                snsd_free_netinfo(cur_net);
+            } else {
+                /* delete port_info later */
+                cur_net->port_info.count--;
+            }
         }
     }
 
     return;
 }
 
-static void snsd_fill_net_info(struct snsd_net_info *cur_net, struct snsd_cfg_infos *cur_cfg)
+static void snsd_fill_net_info(struct snsd_net_info *cur_net,
+                               struct snsd_cfg_infos *cur_cfg)
 {
     cur_net->port_info.service_type |= 1 << SNSD_SERVICE_TYPE_INFORM;
     cur_net->port_info.protocol = cur_cfg->protocol;
@@ -706,7 +1010,6 @@ static bool snsd_check_and_fill(struct snsd_net_info *cur_net,
     return false;
 }
 
-
 static void snsd_dealwith_cfg(struct list_head *net_info,
                               struct snsd_list *cfg_info, enum SNSD_MODE_E mode)
 {
@@ -736,7 +1039,7 @@ static void snsd_dealwith_cfg(struct list_head *net_info,
                     "host:%u.%u.%u.%u, not in mode:%d config.",
                     SNSD_IPV4_FORMAT(cur_net->port_info.ip), mode);
             list_del(list_net);
-            free(cur_net);
+            snsd_free_netinfo(cur_net);
         }
     }
 
@@ -756,7 +1059,7 @@ static void snsd_mgt_show(enum SNSD_MODE_E mode,
             "step:%d, mode:%d: name:%s, vlan:%d,"
             " flag:%d, protocol:%d, ip:%u.%u.%u.%u,"
             " count:%u, ifindex:%d,"
-            " protol_role:%u,  ulp_port:%u,  vlanflag:%d",
+            " protol_role:%u,  ulp_port:%u,  states:%d",
             step, mode, cur_net->port_info.name, cur_net->port_info.vlan,
             cur_net->port_info.flags, cur_net->port_info.protocol,
             SNSD_IPV4_FORMAT(cur_net->port_info.ip),
@@ -764,13 +1067,13 @@ static void snsd_mgt_show(enum SNSD_MODE_E mode,
             cur_net->port_info.phy_ifindex,
             cur_net->port_info.protol_role,
             cur_net->port_info.ulp_port,
-            cur_net->port_info.states & STATE_VLAN_CHANGE);
+            cur_net->port_info.states);
     }
 
     return;
  }
 
- void snsd_free_net_list(struct list_head *list_head)
+void snsd_free_net_list(struct list_head *list_head)
 {
     struct list_head *list = NULL;
     struct list_head *list_tmp = NULL;
@@ -780,7 +1083,7 @@ static void snsd_mgt_show(enum SNSD_MODE_E mode,
         cur_item = (struct snsd_net_info *)list_entry(list, 
                         struct snsd_net_info, list);
         list_del(list);
-        free(cur_item);
+        snsd_free_netinfo(cur_item);
     }
 
     return;
@@ -815,20 +1118,20 @@ int snsd_cfg_net_info(enum SNSD_MODE_E mode,
     snsd_dealwith_cfg(net_info, cfg_info, mode);
     snsd_mgt_show(mode, net_info, step++);
 
-    snsd_protocol_handle(net_info);
+    snsd_protocol_handle(net_info, count);
     snsd_mgt_show(mode, net_info, step++);
 
     return 0;
 }
 
-int snsd_bind_sock(int sock_fd, struct snsd_port_info *port)
+int snsd_bind_sock(int sock_fd, struct snsd_port_related_info *port)
 {
     struct sockaddr_ll ll_addr;
     socklen_t listen_addr_len = sizeof(ll_addr);
     int result;
     
     ll_addr.sll_family = PF_PACKET;
-    ll_addr.sll_ifindex = port->phy_ifindex;
+    ll_addr.sll_ifindex = port->ifindex;
     ll_addr.sll_protocol = htons(ETH_NTS_TYPE);
     result = bind(sock_fd, (struct sockaddr *)(void *)&ll_addr, listen_addr_len);
     if (result < 0) {
@@ -840,7 +1143,7 @@ int snsd_bind_sock(int sock_fd, struct snsd_port_info *port)
     return result;
 }
 
-int snsd_get_server_sock(struct snsd_port_info *port)
+int snsd_get_server_sock(struct snsd_port_related_info *port)
 {
     int sock_fd;
     int result;
@@ -874,7 +1177,7 @@ void snsd_sock_close(int sock_fd)
     close(sock_fd);
 }
 
-int snsd_update_sock_ip(int sock_fd, struct snsd_port_info *port, 
+int snsd_update_sock_ip(int sock_fd, struct snsd_port_related_info *port, 
     enum snsd_update_ip_event update_type)
 {
     enum snsd_sock_event event;

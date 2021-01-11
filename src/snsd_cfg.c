@@ -30,10 +30,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "snsd_cfg.h"
+#include "snsd_connect.h"
+#include "snsd_conn_nvme.h"
 
-static bool snsd_check_ip_validity(char *ip);
-static bool snsd_check_protocol_validity(char *val);
-static bool snsd_unsupport(char *val);
+static bool snsd_check_ip_validity(char *para_name, char *ip);
+static bool snsd_check_protocol_validity(char *para_name, char *val);
+static bool snsd_unsupport(char *para_name, char *val);
+static bool snsd_check_base_hostnqn_validity(char *para_name, char *hostnqn);
+static bool snsd_check_hostnqn_validity(char *para_name, char *hostnqn);
 
 /* config any value */
 enum SNSD_ANY_E anyflag = SNSD_ANY_BUTT;
@@ -66,37 +70,53 @@ struct snsd_protocol prot_match[] = {
 
 /* config file items */
 const struct snsd_cfg_commandline command_line_options[] = {
-    {"--nqn",               SNSD_CFG_STRING, sizeof(cfg.nqn),         (void*)cfg.nqn,                "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--traddr",            SNSD_CFG_STRING, sizeof(cfg.traddr),      (void*)cfg.traddr,             "invalid", NECESSARY_OPTIONAL, NECESSARY_MUST,     snsd_check_ip_validity},
-    {"--trsvcid",           SNSD_CFG_STRING, sizeof(cfg.trsvcid),     (void*)cfg.trsvcid,            "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--host-traddr",       SNSD_CFG_STRING, sizeof(cfg.host_traddr), (void*)cfg.host_traddr,        "invalid", NECESSARY_MUST,     NECESSARY_MUST,     snsd_check_ip_validity},
-    {"--hostnqn",           SNSD_CFG_STRING, sizeof(cfg.hostnqn),     (void*)cfg.hostnqn,            "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--hostid",            SNSD_CFG_STRING, sizeof(cfg.hostid),      (void*)cfg.hostid,             "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--nr-io-queues",      SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.nr_io_queues,      (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--nr-write-queues",   SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.nr_write_queues,   (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--nr-poll-queues",    SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.nr_poll_queues,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--queue-size",        SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.queue_size,        (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--keep-alive-tmo",    SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.keep_alive_tmo,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--reconnect-delay",   SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.reconnect_delay,   (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--ctrl-loss-tmo",     SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.ctrl_loss_tmo,     (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--duplicate_connect", SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.duplicate_connect, (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--disable_sqflow",    SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.disable_sqflow,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--hdr_digest",        SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.hdr_digest,        (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--data_digest",       SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.data_digest,       (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
-    {"--protocol",          SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.protocol,          (void*)0,  NECESSARY_MUST,     NECESSARY_MUST,     snsd_check_protocol_validity},
-    {"--protol_role",       SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.protol_role,       (void*)0,  NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport},
+    {"--nqn",               SNSD_CFG_STRING, sizeof(cfg.nqn),         (void*)cfg.nqn,                "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport,                     "nqn"},
+    {"--traddr",            SNSD_CFG_STRING, sizeof(cfg.traddr),      (void*)cfg.traddr,             "invalid", NECESSARY_OPTIONAL, NECESSARY_MUST,     snsd_check_ip_validity,             "traddr"},
+    {"--trsvcid",           SNSD_CFG_STRING, sizeof(cfg.trsvcid),     (void*)cfg.trsvcid,            "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "trsvcid"},
+    {"--host-traddr",       SNSD_CFG_STRING, sizeof(cfg.host_traddr), (void*)cfg.host_traddr,        "invalid", NECESSARY_MUST,     NECESSARY_MUST,     snsd_check_ip_validity,             "host_traddr"},
+    {"--hostnqn",           SNSD_CFG_STRING, sizeof(cfg.hostnqn),     (void*)cfg.hostnqn,            "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_check_hostnqn_validity,        "hostnqn"},
+    {"--hostid",            SNSD_CFG_STRING, sizeof(cfg.hostid),      (void*)cfg.hostid,             "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "hostid"},
+    {"--nr-io-queues",      SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.nr_io_queues,      (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "nr_io_queues"},
+    {"--nr-write-queues",   SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.nr_write_queues,   (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "nr_write_queues"},
+    {"--nr-poll-queues",    SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.nr_poll_queues,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "nr_poll_queues"},
+    {"--queue-size",        SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.queue_size,        (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "queue_size"},
+    {"--keep-alive-tmo",    SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.keep_alive_tmo,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "keep_alive_tmo"},
+    {"--reconnect-delay",   SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.reconnect_delay,   (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "reconnect_delay"},
+    {"--ctrl-loss-tmo",     SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.ctrl_loss_tmo,     (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,       "ctrl_loss_tmo"},
+    {"--duplicate_connect", SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.duplicate_connect, (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_noarg_para_validity_test, "duplicate_connect"},
+    {"--disable_sqflow",    SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.disable_sqflow,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_noarg_para_validity_test, "disable_sqflow"},
+    {"--hdr_digest",        SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.hdr_digest,        (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport,                     "hdr_digest"},
+    {"--data_digest",       SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.data_digest,       (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport,                     "data_digest"},
+    {"--protocol",          SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.protocol,          (void*)0,  NECESSARY_MUST,     NECESSARY_MUST,     snsd_check_protocol_validity,       "protocol"},
+    {"--protol_role",       SNSD_CFG_INT,    sizeof(int),             (void*)&cfg.protol_role,       (void*)0,  NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport,                     "protol_role"},
     {NULL},
 };
 
 /* base config file items */
 const struct snsd_cfg_commandline base_command_line_options[] = {
-    {"restrain-time",       SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.restrain_time, (void*)0, NECESSARY_BUTT,     NECESSARY_BUTT,     NULL},
+    {"--restrain-time",     SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.restrain_time,     (void*)0,  NECESSARY_BUTT,     NECESSARY_BUTT,     NULL,                                  "restrain_time"},
+    {"--trsvcid",           SNSD_CFG_STRING, sizeof(cfg.trsvcid),     (void*)base_cfg.trsvcid,            "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "trsvcid"},
+    {"--hostnqn",           SNSD_CFG_STRING, sizeof(cfg.hostnqn),     (void*)base_cfg.hostnqn,            "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_check_base_hostnqn_validity,      "hostnqn"},
+    {"--hostid",            SNSD_CFG_STRING, sizeof(cfg.hostid),      (void*)base_cfg.hostid,             "invalid", NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "hostid"},
+    {"--nr-io-queues",      SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.nr_io_queues,      (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "nr_io_queues"},
+    {"--nr-write-queues",   SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.nr_write_queues,   (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "nr_write_queues"},
+    {"--nr-poll-queues",    SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.nr_poll_queues,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "nr_poll_queues"},
+    {"--queue-size",        SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.queue_size,        (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "queue_size"},
+    {"--keep-alive-tmo",    SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.keep_alive_tmo,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "keep_alive_tmo"},
+    {"--reconnect-delay",   SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.reconnect_delay,   (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "reconnect_delay"},
+    {"--ctrl-loss-tmo",     SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.ctrl_loss_tmo,     (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_para_validity_test,          "ctrl_loss_tmo"},
+    {"--duplicate_connect", SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.duplicate_connect, (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_noarg_para_validity_test,    "duplicate_connect"},
+    {"--disable_sqflow",    SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.disable_sqflow,    (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_nvme_noarg_para_validity_test,    "disable_sqflow"},
+    {"--hdr_digest",        SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.hdr_digest,        (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport,                        "hdr_digest"},
+    {"--data_digest",       SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.data_digest,       (void*)-1, NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport,                        "data_digest"},
+    {"--protocol",          SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.protocol,          (void*)0,  NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport,                        "protocol"},
+    {"--protol_role",       SNSD_CFG_INT,    sizeof(int),             (void*)&base_cfg.protol_role,       (void*)0,  NECESSARY_OPTIONAL, NECESSARY_OPTIONAL, snsd_unsupport,                        "protol_role"},
     {NULL},
 };
 
-static bool snsd_unsupport(char *val)
+static bool snsd_unsupport(char *para_name, char *val)
 {   
-    SNSD_PRINT(SNSD_ERR, "config(%s) unsupport.", val);
+    SNSD_PRINT(SNSD_ERR, "para(%s) config(%s) unsupport.", para_name, val);
     return false;
 }
 
@@ -129,10 +149,13 @@ static int snsd_split_with_symbol(char *tmp_info, char **buffer,
     return 0;
 }
 
-static bool snsd_check_ip_validity(char *ip)
+static bool snsd_check_ip_validity(char *para_name, char *ip)
 {
     struct sockaddr_in ipaddr4;
     struct sockaddr_in6 ipaddr6;
+
+    if (para_name == NULL || ip == NULL)
+        return false;
 
     if (strcmp(ip, SNSD_SW_ANY) == 0)
         return true;
@@ -145,10 +168,13 @@ static bool snsd_check_ip_validity(char *ip)
         return false;
 }
 
-static bool snsd_check_protocol_validity(char *val)
+static bool snsd_check_protocol_validity(char *para_name, char *val)
 {
     int i, size;
     int count = 0;
+
+    if (para_name == NULL || val == NULL)
+        return false;
 
     size = sizeof(prot_match) / sizeof(struct snsd_protocol);
 
@@ -165,6 +191,24 @@ static bool snsd_check_protocol_validity(char *val)
     }
 
     sprintf(val, "%d", count);
+    return true;
+}
+
+static bool snsd_check_base_hostnqn_validity(char *para_name, char *hostnqn)
+{
+    if (para_name == NULL || hostnqn == NULL || strlen(hostnqn) >= SNSD_NQN_MAX_LEN)
+        return false;
+
+    memcpy(snsd_hostnqn, hostnqn, strlen(hostnqn));
+
+    return true;
+}
+
+static bool snsd_check_hostnqn_validity(char *para_name, char *hostnqn)
+{
+    if (para_name == NULL || hostnqn == NULL || strlen(hostnqn) >= SNSD_NQN_MAX_LEN)
+        return false;
+
     return true;
 }
 
@@ -502,9 +546,8 @@ static int snsd_check_and_save(const struct snsd_cfg_commandline *cmdline,
 
     /* check validity */
     if (cmdline[index].check_validity != NULL) {
-        if (cmdline[index].check_validity(item_info->value) == false) {
-            SNSD_PRINT(SNSD_ERR, "%s is not valid, val:%s.",
-                            item_info->name, item_info->value);
+        if (cmdline[index].check_validity(cmdline[index].drv_option, item_info->value) == false) {
+            SNSD_PRINT(SNSD_ERR, "%s is not valid, val:%s.", item_info->name, item_info->value);
             return -EPERM;
         }
     }
@@ -546,7 +589,9 @@ static int snsd_save_one_item(struct snsd_cfg_item_info *item_info)
     }
 
     for (i = 0; i < size && cmdline[i].option != NULL; i++) {
-        if (strcmp(cmdline[i].option, item_info->name) == 0)
+        /* suport para_name with '--' or without any tags */
+        if (strcmp(cmdline[i].option, item_info->name) == 0 ||
+            strcmp(cmdline[i].option + 2, item_info->name) == 0)
             return snsd_check_and_save(cmdline, i, item_info);
     }
 
@@ -1045,7 +1090,7 @@ static int snsd_gen_hostnqn()
     FILE *f;
     int len;
     char uuid_str[SNSD_CFG_UUID_LEN];
-    char hostnqn[SNSD_CFG_NAME_MAX_LEN + 1];
+    char hostnqn[SNSD_NQN_MAX_LEN];
 
     f = fopen(SNSD_PATH_UUID, "r");
     if (f == NULL)
@@ -1057,7 +1102,7 @@ static int snsd_gen_hostnqn()
     }
     fclose(f);
 
-    len = snprintf(hostnqn, SNSD_CFG_NAME_MAX_LEN + 1, "nqn.2014-08.org.nvmexpress:uuid:%s", uuid_str);
+    len = snprintf(hostnqn, SNSD_NQN_MAX_LEN, "nqn.2014-08.org.nvmexpress:%s", uuid_str);
     if (len < 0)
         return -EINVAL;
 
@@ -1083,15 +1128,78 @@ int snsd_recovery_hostnqn()
     return 0;
 }
 
-char *snsd_cfg_get_hostnqn(void)
+char *snsd_get_base_hostnqn(void)
 {
     return snsd_hostnqn;
+}
+
+int snsd_hostnqn_init(void) {
+    /* check file /etc/nvme/hostnqn, if not exist, will create and generate hostnqn */
+    if (snsd_check_file(SNSD_PATH_HOSTNQN, R_OK) != 0) {
+        if (snsd_gen_hostnqn() != 0) {
+            SNSD_PRINT(SNSD_ERR, "Create file %s fail.", SNSD_PATH_HOSTNQN);
+            return -EPERM;
+        }
+    }
+
+    if (strlen(snsd_hostnqn) == 0) {
+        /* if base_cfg not config hostnqn, will use /etc/nvme/hostnqn */
+        if (snsd_get_hostnqn(snsd_hostnqn) != true) {
+            SNSD_PRINT(SNSD_ERR, "Generate hostnqn fail.");
+            return -EPERM;
+        }
+    }
+
+    return 0;
+}
+
+struct snsd_base_cfg *snsd_get_base_info()
+{
+    return &base_cfg;
+}
+
+struct snsd_cfg_infos *snsd_find_dc_info(const char *host_traddr, const char *traddr, int protocol)
+{
+    struct snsd_cfg_infos *dc_item;
+    struct list_head *dc_list;
+
+    list_for_each(dc_list, &(dc_info_list.list)) {
+        dc_item = (struct snsd_cfg_infos *)list_entry(dc_list, struct snsd_cfg_infos, list);
+        if (strcmp(host_traddr, dc_item->host_traddr) == 0 && 
+            strcmp(traddr, dc_item->traddr) == 0 &&
+            protocol == dc_item->protocol) {
+            return dc_item;
+        }
+    }
+
+    return NULL;
+}
+
+struct snsd_cfg_infos *snsd_find_sw_info(const char *host_traddr, int protocol)
+{
+    struct snsd_cfg_infos *sw_item;
+    struct list_head *sw_list;
+
+    list_for_each(sw_list, &(sw_info_list.list)) {
+        sw_item = (struct snsd_cfg_infos *)list_entry(sw_list, struct snsd_cfg_infos, list);
+        if (anyflag == SNSD_ANY_YES) {
+            return sw_item;
+        }
+
+        if (strcmp(host_traddr, sw_item->host_traddr) == 0 && 
+            protocol == sw_item->protocol) {
+            return sw_item;
+        }
+    }
+
+    return NULL;
 }
 
 int snsd_cfg_init(void)
 {
     snsd_init_listinfo(&sw_info_list);
     snsd_init_listinfo(&dc_info_list);
+    memset(snsd_hostnqn, 0, (size_t)(SNSD_NQN_MAX_LEN));
 
     SNSD_PRINT(SNSD_INFO, "Config init start.");
 
@@ -1118,19 +1226,10 @@ int snsd_cfg_init(void)
         return -EPERM;
     }
 
-    /* check file /etc/nvme/hostnqn, if not have, will create and generate hostnqn */
-    if (snsd_check_file(SNSD_PATH_HOSTNQN, R_OK) != 0) {
-        if (snsd_gen_hostnqn() != 0) {
-            snsd_cfg_free_space();
-            SNSD_PRINT(SNSD_ERR, "Generate hostnqn fail.");
-            return -EPERM;
-        }
-    }
-
-    /* get the hostnqn from /etv/nvme/hostnqn */
-    if (snsd_get_hostnqn(snsd_hostnqn) != true) {
+    /* if hostnqn isn't been configed in base_cfg, will use the hostnqn from /etc/nvme/hostnqn */
+    if (snsd_hostnqn_init() != 0) {
         snsd_cfg_free_space();
-        SNSD_PRINT(SNSD_ERR, "Get hostnqn fail.");
+        SNSD_PRINT(SNSD_ERR, "Hostnqn init fail.");
         return -EPERM;
     }
 

@@ -140,7 +140,8 @@ struct snsd_cfg_commandline {
     void *default_value;
     enum snsd_necessary sw_necessary;  /* switched network connect necessary */
     enum snsd_necessary dc_necessary;  /* directly connected network connect necessary */
-    bool (*check_validity)(char* value);
+    bool (*check_validity)(char* para_name, char* para_value);
+    char *drv_option;
 };
 
 struct snsd_protocol {
@@ -152,12 +153,12 @@ struct snsd_protocol {
 struct snsd_cfg_infos {
     struct list_head list;                      /* list node */
     enum SNSD_MODE_E mode;                      /* network mode */
-    char nqn[SNSD_CFG_NAME_MAX_LEN + 1];        /* nqn name */
+    char nqn[SNSD_NQN_MAX_LEN];                 /* nqn name */
     char traddr[SNSD_IP_LEN + 1];               /* transport address */
     char trsvcid[SNSD_COMMON_LEN + 1];          /* transport service id (e.g. IP port) */
     char host_traddr[SNSD_IP_LEN + 1];          /* host traddr (e.g. INI IP */
-    char hostnqn[SNSD_CFG_NAME_MAX_LEN + 1];    /* user-defined hostnqn */
-    char hostid[SNSD_COMMON_LEN + 1];           /* user-defined hostid (if default not used) */
+    char hostnqn[SNSD_NQN_MAX_LEN];             /* user-defined hostnqn */
+    char hostid[SNSD_CFG_UUID_LEN];             /* user-defined hostid (if default not used) */
     int  nr_io_queues;                          /* number of io queues to use (default is core count) */
     int  nr_write_queues;                       /* number of write queues to use (default 0) */
     int  nr_poll_queues;                        /* number of poll queues to use (default 0) */
@@ -176,6 +177,22 @@ struct snsd_cfg_infos {
 
 struct snsd_base_cfg {
     int  restrain_time;                         /* The restrain time of disconnect device when net link down. Unit is second. */
+    char trsvcid[SNSD_COMMON_LEN + 1];          /* transport service id (e.g. IP port) */
+    char hostnqn[SNSD_NQN_MAX_LEN];             /* user-defined hostnqn */
+    char hostid[SNSD_CFG_UUID_LEN];             /* user-defined hostid (if default not used) */
+    int  nr_io_queues;                          /* number of io queues to use (default is core count) */
+    int  nr_write_queues;                       /* number of write queues to use (default 0) */
+    int  nr_poll_queues;                        /* number of poll queues to use (default 0) */
+    int  queue_size;                            /* number of io queue elements to use (default 128) */
+    int  keep_alive_tmo;                        /* keep alive timeout period in seconds */
+    int  reconnect_delay;                       /* reconnect timeout period in seconds */
+    int  ctrl_loss_tmo;                         /* controller loss timeout period in seconds */
+    int  duplicate_connect;                     /* allow duplicate connections between same transport host and subsystem port */
+    int  disable_sqflow;                        /* disable controller sq flow control (default false) */
+    int  hdr_digest;                            /* enable transport protocol header digest (TCP transport) */
+    int  data_digest;                           /* enable transport protocol data digest (TCP transport) */
+    int  protocol;                              /* bit0:nvme over roce, bit1:nvme over tcp, bit2:iscsi */
+    int  protol_role;                           /* 1:server, 2:client, 3:both */
 };
 
 extern struct snsd_base_cfg base_cfg;
@@ -210,14 +227,21 @@ static inline unsigned int snsd_get_format_num(char *buffer, const char *symbol)
     return count;
 }
 
+#define SNSD_CFG_FORMAT_CTRL_ADDDR_TEST "traddr=0.0.0.0,nqn=nqn.2020-02.123456,transport=rdma"
+#define SNSD_CFG_PATH_FABRICS      "/dev/nvme-fabrics"
+#define SNSD_CFG_KEY_CTRL_INSTANCE "instance="
+typedef bool (*snsd_check_valid)(char* para_name, char* para_value);
+
 enum SNSD_ANY_E snsd_get_any_ip(void);
 int snsd_get_any_protocol(void);
 struct snsd_list* snsd_get_net_cfg(enum SNSD_MODE_E mode);
-bool snsd_get_hostnqn(char *vsnsd_hostnqn);
 int snsd_recovery_hostnqn();
 int snsd_cfg_init(void);
 void snsd_cfg_exit(void);
-char *snsd_cfg_get_hostnqn(void);
+char *snsd_get_base_hostnqn(void);
+struct snsd_base_cfg *snsd_get_base_info();
+struct snsd_cfg_infos *snsd_find_sw_info(const char *host_traddr, int protocol);
+struct snsd_cfg_infos *snsd_find_dc_info(const char *host_traddr, const char *traddr, int protocol);
 
 #ifdef __cplusplus
 }

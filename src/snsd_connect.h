@@ -78,6 +78,7 @@ struct snsd_connect_param {
     unsigned char   traddr[IPV6_ADDR_LENGTH];       /* <M> target transport address */
     unsigned char   host_traddr[IPV6_ADDR_LENGTH];  /* <M> host transport address */
     char subsysnqn[SNSD_NQN_MAX_LEN];               /* <O>  NQN of subsystem */
+    enum SNSD_MODE_E mode;                          /* <M> connect mode, SW or DC */
 
     int action_flag;                                /* <O> the action flag for connect or disconnect */
 };

@@ -40,16 +40,19 @@ extern "C" {
 
 struct switch_port_fd {
     int ifindex;
-    int fd;
     int refs;
+    int fd;
+    unsigned long index_map;
     time_t old_time;
 };
 
-static inline bool switch_need_check_lldp(unsigned int pre_count, unsigned int now)
+static inline bool switch_need_check_lldp(unsigned int pre_count,
+                                          unsigned int now)
 {
     unsigned int interval;
 
-    interval = (now >= pre_count) ? (now - pre_count) : ((unsigned int)0xffffffff - now + pre_count + 1);
+    interval = (now >= pre_count) ? (now - pre_count) :
+               ((unsigned int)0xffffffff - now + pre_count + 1);
     if (interval >= SWITCH_POLL_INTEVAL)
         return true;
     return false;
@@ -61,9 +64,11 @@ static inline void switch_fd_init(struct switch_port_fd *fd_info)
     fd_info->fd = -1;
     fd_info->refs = 0;
     fd_info->old_time = 0;
+    fd_info->index_map = 0;
 }
 
-void switch_port_handle(struct list_head *port_list_head, unsigned int poll_count);
+void switch_port_handle(struct list_head *port_list_head,
+                        unsigned int poll_count);
 void switch_port_init(void);
 
 #ifdef __cplusplus
