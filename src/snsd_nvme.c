@@ -109,7 +109,7 @@ static int nvme_get_disclog_assign_numrec(int fd,
         return -ENOMEM;
 
     ret = nvme_get_disclog(fd, log, log_size);
-    if (ret) {
+    if (ret != 0) {
         free(log);
         return ret;
     }
@@ -135,7 +135,7 @@ int nvme_discovery_log(const char *dev_path, struct nvmf_disc_rsp_page_hdr **log
 
     /* Get the Number of Records(NUMREC) firstly. */
     ret = nvme_get_disclog_assign_numrec(fd, 0ULL, &log);
-    if (ret) {
+    if (ret != 0) {
         SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
             "Failed to discovery '%s': ret(%d).", dev_path, ret);
         goto out_close;
@@ -147,7 +147,7 @@ int nvme_discovery_log(const char *dev_path, struct nvmf_disc_rsp_page_hdr **log
 
     while (retries++ < DISCOVERY_MAX_RETRY) {
         ret = nvme_get_disclog_assign_numrec(fd, numrec, &log);
-        if (ret) {
+        if (ret != 0) {
             SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
                 "Failed to discovery '%s': ret(%d).", dev_path, ret);
             goto out_close;

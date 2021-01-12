@@ -39,8 +39,8 @@
 extern "C" {
 #endif /* __cpluscplus */
 
-extern int snsd_get_server_sock(struct snsd_port_info *port);
-extern int snsd_bind_sock(int sock_fd, struct snsd_port_info *port);
+extern int snsd_get_server_sock(struct snsd_port_related_info *port);
+extern int snsd_bind_sock(int sock_fd, struct snsd_port_related_info *port);
 extern int snsd_set_sock_options(int sock_fd, int ifindex);
 extern void snsd_client_notify(int fd);
 extern void snsd_int_drop_msg_cnt(void);
@@ -63,7 +63,7 @@ struct msg_cnt {
 struct server_test_object {
     int sock;
     char name[IFNAMSIZ];
-    unsigned char local_ip[IPV4_ADDR_LENGTH];
+    unsigned char local_ip[SNSD_MAX_IP_PHYPORT][IPV4_ADDR_LENGTH];
     unsigned char remote_ip[IPV4_ADDR_LENGTH];
     unsigned char local_mac[MAC_LENGTH];
     unsigned char remote_mac[ETH_ALEN];
@@ -76,7 +76,7 @@ struct server_test_object {
     struct msg_cnt cnt;
 } test_obj;
 struct snsd_nt_msg_info my_test_msg;
-
+unsigned char test_invalid_ip[] = {192, 168, 0, 111};
 namespace {
     class snsd_server_ut : public ::testing::Test {
     protected:
@@ -102,9 +102,17 @@ namespace {
     };
 }
 
-static void ut_server_init_obj(void)
+static void ut_server_build_multi_ip(void)
 {
     unsigned char local_ip[] = {192, 168, 0, 1};
+    for (int i = 0; i < SNSD_MAX_IP_PHYPORT; i++) {
+        local_ip[3] += i;
+        memcpy(test_obj.local_ip[i], local_ip, IPV4_ADDR_LENGTH);
+    }
+}
+
+static void ut_server_init_obj(void)
+{
     unsigned char remote_ip[] = {127, 0, 0, 1};
     unsigned char local_mac[MAC_LENGTH] = {0x0, 0x3, 0x88, 0x55, 0x0, 0x38};
     unsigned char remote_mac[ETH_ALEN] = {0x50, 0x6b, 0x4b, 0xef, 0xcb, 0x46};
@@ -113,11 +121,11 @@ static void ut_server_init_obj(void)
     memset(&test_obj, 0, sizeof(test_obj));
     test_obj.sock = -1;
     strncpy(test_obj.name, "eth0", IFNAMSIZ);
-    memcpy(test_obj.local_ip, local_ip, IPV4_ADDR_LENGTH);
     memcpy(test_obj.remote_ip, remote_ip, IPV4_ADDR_LENGTH);
     memcpy(test_obj.local_mac, local_mac, MAC_LENGTH);
     memcpy(test_obj.remote_mac, remote_mac, MAC_LENGTH);
     strncpy(test_obj.nqn, nqn, sizeof(test_obj.nqn));
+    ut_server_build_multi_ip();
 }
 
 static void ut_case_init_obj(void)
@@ -137,13 +145,13 @@ static void ut_case_init_obj(void)
 
 static int ut_server_create_instance(void)
 {
-    struct snsd_port_info port;
+    struct snsd_port_related_info port;
     int ret;
 
     memset((void *)&port, 0, sizeof(port));
     strncpy(port.name, test_obj.name, IFNAMSIZ);
     memcpy(port.mac, test_obj.local_mac, sizeof(test_obj.local_mac));
-    port.phy_ifindex = -1;
+    port.ifindex = -1;
     ret = snsd_get_server_sock(&port);
 
     return ret;
@@ -169,11 +177,11 @@ static void ut_server_instance_exit(void)
 {
     int sock_id = test_obj.sock;
     int ret;
-    struct snsd_port_info port_info;
+    struct snsd_port_related_info port_info;
     ASSERT_TRUE(test_obj.sock >= 0);
 
     memset(&port_info, 0, sizeof(port_info));
-    memcpy(port_info.ip, test_obj.local_ip, IPV4_ADDR_LENGTH);
+    memcpy(port_info.ip, test_obj.local_ip[0], IPV4_ADDR_LENGTH);
 
     ret = snsd_update_sock_ip(sock_id, &port_info, SNSD_UPDATE_REMOVE_IP);
     snsd_sock_close(sock_id);
@@ -313,13 +321,39 @@ static void ut_encode_msg(struct snsd_nt_msg_info *msg, void *tlv_t, struct ipv4
     return;
 }
 
+static ssize_t recvmsg_invalid_ip_stub(int sockfd, struct msghdr *msg, int flags)
+{
+    struct ipv4_pair ip;
+    struct tlv_info nt_tlv;
+    int msg_len;
+    memcpy(ip.dst_ip, test_invalid_ip, IPV4_ADDR_LENGTH);
+    memcpy(ip.src_ip, test_obj.remote_ip, IPV4_ADDR_LENGTH);
+
+    memset(&my_test_msg, 0, sizeof(my_test_msg));
+    ut_encode_eth_header(&my_test_msg, test_obj.remote_mac);
+    ut_encode_msg_header(&my_test_msg);
+    ut_msg_header_err_inject(&my_test_msg);
+    ut_encode_msg(&my_test_msg, (void *)&nt_tlv, &ip, 
+        test_obj.type, test_obj.nqn);
+
+    msg_len = sizeof(struct ethhdr) + 
+        sizeof(nt_msg_header) + 
+        my_test_msg.nt_header.tlv_len;
+    
+    ut_msg_tlv_err_inject(&my_test_msg);
+    NT_TLV_HTONS(my_test_msg.nt_header.tlv_len);
+
+    memcpy(msg->msg_iov[0].iov_base, &my_test_msg, msg_len);
+    return msg_len;
+}
+
 static ssize_t recvmsg_single_nt_stub(int sockfd, struct msghdr *msg, int flags)
 {
     struct ipv4_pair ip;
     struct tlv_info nt_tlv;
     int msg_len;
 
-    memcpy(ip.dst_ip, test_obj.local_ip, IPV4_ADDR_LENGTH);
+    memcpy(ip.dst_ip, test_obj.local_ip[0], IPV4_ADDR_LENGTH);
     memcpy(ip.src_ip, test_obj.remote_ip, IPV4_ADDR_LENGTH);
 
     memset(&my_test_msg, 0, sizeof(my_test_msg));
@@ -346,7 +380,7 @@ static ssize_t recvmsg_multi_nt_stub(int sockfd, struct msghdr *msg, int flags)
     struct tlv_info nt_tlv;
     int msg_len;
 
-    memcpy(ip.dst_ip, test_obj.local_ip, IPV4_ADDR_LENGTH);
+    memcpy(ip.dst_ip, test_obj.local_ip[0], IPV4_ADDR_LENGTH);
     memcpy(ip.src_ip, test_obj.remote_ip, IPV4_ADDR_LENGTH);
 
     memset(&my_test_msg, 0, sizeof(my_test_msg));
@@ -491,12 +525,12 @@ void snsd_ut_common_stub(void)
 
 TEST_F(snsd_server_ut, case1_server_update_ip)
 {
-    struct snsd_port_info port_info;
+    struct snsd_port_related_info port_info;
     int ret;
     ASSERT_TRUE(test_obj.sock >= 0);
 
     memset(&port_info, 0, sizeof(port_info));
-    memcpy(port_info.ip, test_obj.local_ip, IPV4_ADDR_LENGTH);
+    memcpy(port_info.ip, test_obj.local_ip[0], IPV4_ADDR_LENGTH);
 
     ret = snsd_update_sock_ip(test_obj.sock, &port_info, SNSD_UPDATE_ADD_IP);
     EXPECT_EQ(ret, 0);
@@ -513,7 +547,6 @@ TEST_F(snsd_server_ut, case2_server_notify_connect)
     test_obj.type = NOTIFY_HOST_ACTIVE;
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 1);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 0);
@@ -531,7 +564,6 @@ TEST_F(snsd_server_ut, case3_server_notify_disconnect)
     test_obj.type = NOTIFY_HOST_INACTIVE;
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 1);
@@ -548,7 +580,6 @@ TEST_F(snsd_server_ut, case4_server_multi_notify)
     snsd_ut_common_stub();
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 1);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 1);
@@ -565,7 +596,6 @@ TEST_F(snsd_server_ut, case5_server_invalid_msg_type)
     snsd_ut_common_stub();
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 0);
@@ -583,7 +613,6 @@ TEST_F(snsd_server_ut, case6_server_invalid_dst_mac)
     snsd_ut_common_stub();
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 0);
@@ -601,7 +630,6 @@ TEST_F(snsd_server_ut, case6_server_invalid_ver)
     snsd_ut_common_stub();
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 0);
@@ -619,7 +647,6 @@ TEST_F(snsd_server_ut, case7_server_long_tlv_len)
     snsd_ut_common_stub();
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 0);
@@ -647,7 +674,6 @@ TEST_F(snsd_server_ut, case8_server_small_msg)
     snsd_ut_common_stub();
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 0);
@@ -665,10 +691,59 @@ TEST_F(snsd_server_ut, case9_server_jumbo_msg)
     snsd_ut_common_stub();
     snsd_client_notify(test_obj.sock);
     
-    /* 等待任务执行 */
     sleep(2);
     EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
     EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 0);
     EXPECT_EQ(test_obj.cnt.ack_msg_cnt, 0);
     EXPECT_EQ(snsd_get_drop_msg_cnt(), 1);
+}
+
+TEST_F(snsd_server_ut, case10_server_update_multi_ip)
+{
+    struct snsd_port_related_info port_info;
+    int ret;
+    ASSERT_TRUE(test_obj.sock >= 0);
+
+    memset(&port_info, 0, sizeof(port_info));
+    for (int i = 0; i < SNSD_MAX_IP_PHYPORT; i++) {
+        memcpy(port_info.ip, test_obj.local_ip[i], IPV4_ADDR_LENGTH);
+        
+        ret = snsd_update_sock_ip(test_obj.sock, &port_info, SNSD_UPDATE_ADD_IP);
+        EXPECT_EQ(ret, 0);
+    }
+}
+
+TEST_F(snsd_server_ut, case11_server_invalid_ip)
+{
+    ASSERT_TRUE(test_obj.sock >= 0);
+    MOCKER(recvmsg)
+        .stubs()
+        .will(invoke(recvmsg_invalid_ip_stub));
+    snsd_ut_common_stub();
+    snsd_client_notify(test_obj.sock);
+
+    sleep(1);
+    EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
+    EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 0);
+    EXPECT_EQ(test_obj.cnt.ack_msg_cnt, 0);
+    EXPECT_EQ(snsd_get_drop_msg_cnt(), 0);
+}
+
+TEST_F(snsd_server_ut, case12_server_last_ip)
+{
+    ASSERT_TRUE(test_obj.sock >= 0);
+    memcpy(test_invalid_ip, &test_obj.local_ip[SNSD_MAX_IP_PHYPORT - 1], 
+        IPV4_ADDR_LENGTH);
+
+    MOCKER(recvmsg)
+        .stubs()
+        .will(invoke(recvmsg_invalid_ip_stub));
+    snsd_ut_common_stub();
+    snsd_client_notify(test_obj.sock);
+
+    sleep(1);
+    EXPECT_EQ(test_obj.cnt.connect_msg_cnt, 0);
+    EXPECT_EQ(test_obj.cnt.disconnect_msg_cnt, 1);
+    EXPECT_EQ(test_obj.cnt.ack_msg_cnt, 1);
+    EXPECT_EQ(snsd_get_drop_msg_cnt(), 0);
 }

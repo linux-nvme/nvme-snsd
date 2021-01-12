@@ -119,6 +119,8 @@ enum nt_msg_notify_reason {
     NOTIFY_REASON_PACKET_ERROR,
     NOTIFY_REASON_CHANGE_ZONE,
     NOTIFY_REASON_CHANGE_IP,
+    NOTIFY_REASON_LLDP_AGE_OUT,
+    NOTIFY_REASON_BFD_DOWN,
 };
 
 #pragma pack(push)
@@ -256,9 +258,12 @@ struct snsd_attack_monitor {
     unsigned int drop_interval;
 };
 
+struct snsd_host_ip {
+    unsigned char ip[IPV6_ADDR_LENGTH];
+};
 struct snsd_listener {
     int listening_fd;
-    unsigned char host_ip[SNSD_MAX_IP_PHYPORT][IPV6_ADDR_LENGTH];
+    struct snsd_host_ip host_ip[SNSD_MAX_IP_PHYPORT];
     struct sockaddr_ll addr;
     char if_name[IFNAMSIZ];
     struct snsd_nt_msg_smp smp;
@@ -295,11 +300,23 @@ struct ipv4_pair {
     char dst_ip[IPV4_ADDR_LENGTH];
 };
 
+#define QUERY_ZONE_TLV 3
+struct snsd_query_zone_tlv {
+    struct ethhdr eth_hdr;
+    nt_msg_header nt_header;
+    tl_info tl;
+    union {
+        sub_tlv_type_ipv4 ipv4;
+        sub_tlv_type_ipv6 ipv6;
+    } ip_tlv;
+};
+
 int snsd_server_run(void);
 void snsd_server_exit(void);
-int snsd_update_server(int sock_fd, struct snsd_port_info *port, 
+int snsd_update_server(int sock_fd, struct snsd_port_related_info *port, 
     enum snsd_sock_event event);
 int snsd_help_run(void);
+void snsd_build_query_tlv(struct snsd_port_info *port, struct snsd_query_zone_tlv *query_tlv);
 
 #ifdef __cplusplus
 }
