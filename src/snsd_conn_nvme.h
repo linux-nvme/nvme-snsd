@@ -53,7 +53,7 @@ extern "C" {
 #define SNSD_NVME_TRANSPORT_TCP     "tcp"
 #define SNSD_NVME_FORMAT_CTRL_ADDDR "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s,hostnqn=%s,nqn=%s"
 #define SNSD_NVME_FORMAT_CTRL_ADDDR_TEST "traddr=0.0.0.0,nqn=nqn.2020-02.123456,transport=rdma"
-#define SNSD_NVME_FORMAT_DISC_ADDR "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s,nqn=%s"
+#define SNSD_NVME_FORMAT_DISC_ADDR "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s,hostnqn=%s,nqn=%s"
 #define SNSD_NVME_LOG_CTRL_ADDDR    "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s"
 #define SNSD_NVME_CTRL_LOSS_TIMEO   1800 /* 30 minutes of reconnect attempts before giving up */
 #define SNSD_NVME_KEEPALIVE_TIMEO   100  /* using 100 millisecond to trigger nvme timeout quickly */
