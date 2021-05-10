@@ -548,7 +548,7 @@ static int snsd_nvme_disc_get_subsysnqn(struct snsd_nvme_ctx *ctx)
 
     len = snprintf(arg_buf, SNSD_BUF_SIZE, SNSD_NVME_FORMAT_DISC_ADDR,
                    ctx->traddr, ctx->host_traddr, ctx->transport,
-                   ctx->trsvcid, SNSD_NVME_DISCOVERY_SUBNQN);
+                   ctx->trsvcid, ctx->hostnqn, SNSD_NVME_DISCOVERY_SUBNQN);
     if (len < 0)
         return -EINVAL;
 
