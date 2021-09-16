@@ -1,19 +1,19 @@
 /*
  * BSD 3-Clause License
- * 
+ *
  * Copyright (c) [2020], [Huawei Technologies Co., Ltd.]
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright notice, this
  *    list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
@@ -75,11 +75,19 @@ struct peon_task {
 #define PEON_DCBATCH_WORKER_NUM     1
 #define PEON_RECHECK_WORKER_NUM     1
 
+#define PEON_DYN_DISCONN_WORKER_NUM 1
+#define PEON_DYN_DISCONN_WORKER_LIMIT 512
+
 #define PEON_WORKER_PERIOD_NORMAL   10  // worker shedule period when idle, unit: second
 #define PEON_WORKER_PERIOD_FAST     1   // worker shedule period when busy, unit: second
 #define PEON_RECHECK_WORKER_PERIOD  60  // shedule period for recheck worker, unit: second
 #define PEON_DEFAULT_RESTRAIN_TIME  3   // unit: second
 #define PEON_FAIL_RETRY_INTERVAL    60  // The retry interval of a failed task, unit: second
+
+#define PEON_DYN_NUM                1
+
+#define PEON_STATIC                 0
+#define PEON_DYNAMIC                1
 
 struct peon_worker {
     int index;
@@ -106,6 +114,7 @@ enum {
 
 struct peon {
     int type;
+    int peon_type;
     struct list_head wait_list;
     struct list_head proc_list;
 
@@ -114,6 +123,7 @@ struct peon {
     unsigned int fast_period;
 
     int worker_num;
+    int worker_all_count;
     struct peon_worker workers[0];
 };
 
@@ -131,6 +141,7 @@ int peon_add_disconn_task(struct snsd_connect_param *param,
                           struct snsd_conn_toolbox *toolbox);
 int peon_add_dcbatch_task(struct snsd_connect_param *param,
                           struct snsd_conn_toolbox *toolbox);
+struct peon *peon_dyn_create(int sn, struct peon_task *task);
 int peon_add_disconn_task_inherit(struct snsd_connect_param *param, unsigned long sn,
                                   struct snsd_conn_toolbox *toolbox);
 

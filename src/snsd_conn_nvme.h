@@ -57,6 +57,8 @@ extern "C" {
 #define SNSD_NVME_LOG_CTRL_ADDDR    "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s"
 #define SNSD_NVME_CTRL_LOSS_TIMEO   1800 /* 30 minutes of reconnect attempts before giving up */
 #define SNSD_NVME_KEEPALIVE_TIMEO   100  /* using 100 millisecond to trigger nvme timeout quickly */
+#define SNSD_NVME_KEEPALIVE_RETRY_TIMES   100       /* keep alive retry times */
+#define SNSD_NVME_KEEPALIVE_RETRY_INTERVAL 100000   /* keep alive retry interval, 100ms */
 
 enum snsd_nvme_ctrl_state {
     SNSD_NVME_CTRL_STATE_LIVE,

@@ -1,19 +1,19 @@
 /*
  * BSD 3-Clause License
- * 
+ *
  * Copyright (c) [2020], [Huawei Technologies Co., Ltd.]
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright notice, this
  *    list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
@@ -42,6 +42,7 @@ static pthread_mutex_t peon_list_lock;
 /* A simple SN generator */
 static struct peon_sn_generator peon_task_sn_generator;
 
+static unsigned int peon_dyn_worker_num = 0;
 
 static inline int peon_cpu(void)
 {
@@ -129,6 +130,7 @@ static int peon_task_add(struct peon *pe, unsigned long sn,
                          struct snsd_conn_toolbox *toolbox)
 {
     struct peon_task *task;
+    struct peon *dynamic_peon;
 
     task = calloc(1, sizeof(struct peon_task));
     if (task == NULL)
@@ -151,13 +153,31 @@ static int peon_task_add(struct peon *pe, unsigned long sn,
     memcpy(&task->param, param, sizeof(struct snsd_connect_param));
 
     peon_lock();
+    if (pe->type == PEON_TYPE_DISCONN && pe->worker_all_count >= pe->worker_num &&
+        peon_dyn_worker_num <= PEON_DYN_DISCONN_WORKER_LIMIT) {
+        /* Create dynamic disconnect peon */
+        dynamic_peon = peon_dyn_create(sn, task);
+        if (dynamic_peon) {
+            peon_dyn_worker_num++;
+            peon_unlock();
+            SNSD_PRINT(SNSD_INFO, 
+                "Create dynamic peon peon/dbworker-dyn-%ld successfully, total dynamic worker is %u", 
+                sn, peon_dyn_worker_num);
+            return 0;
+        } else {
+            SNSD_PRINT(SNSD_ERR, "Create dynamic peon fail, will use static peon");
+        }
+    }
+
     list_add_tail(&task->node, &pe->wait_list);
+    pe->worker_all_count++;
     peon_unlock();
 
     for (int i = 0; i < pe->worker_num; i++)
         waitq_wakeup(&pe->workers[i].waitq);
 
     return 0;
+
 }
 
 static int peon_add_task_inner(struct peon *pe, struct snsd_connect_param *param,
@@ -242,7 +262,7 @@ static bool peon_task_match(struct peon_task *t1, struct peon_task *t2, bool isb
 
     if (isbatch)
         return true;
-    
+
     if (param1->portid != param2->portid ||
         !snsd_ip_match(param1->family, param1->traddr, param2->traddr))
         return false;
@@ -288,7 +308,7 @@ static enum peon_task_action peon_task_action_judge(struct peon *pe, struct peon
     action = PEON_TASK_ACTION_NONE;
     switch (pe->type) {
     /* For a connect task:
-     * Firstly check whether a disconnect task of the same device exists to 
+     * Firstly check whether a disconnect task of the same device exists to
      * filter the outdated disconnect or connect task.
      * Then check whether a connect task of the same device exists, ensure that
      * do not execute multiple connect tasks for one device at the same time.
@@ -341,7 +361,7 @@ static enum peon_task_action peon_task_action_judge(struct peon *pe, struct peon
 
 static bool peon_task_restrain_timeout(struct peon_task *task,
                                        unsigned int restrain_time)
-{ 
+{
     time_t now;
 
     /* Considered that the time maybe change backward,
@@ -369,6 +389,7 @@ static struct peon_task *peon_task_get(struct peon *pe)
             SNSD_PRINT(SNSD_INFO, "Discard one dead task(sn:%ld).", p->sn);
             list_del(&p->node);
             peon_task_free(p);
+            pe->worker_all_count--;
             continue;
         }
 
@@ -379,6 +400,7 @@ static struct peon_task *peon_task_get(struct peon *pe)
             SNSD_PRINT(SNSD_INFO, "Discard one task(sn:%ld).", p->sn);
             list_del(&p->node);
             peon_task_free(p);
+            pe->worker_all_count--;
         } else if (peon_task_restrain_timeout(p, pe->restrain_time)) {
             task = p;
             break;
@@ -409,7 +431,7 @@ static void peon_task_complete(struct peon *pe, struct peon_task *task, int resu
             task->next_run = times_sec() + PEON_FAIL_RETRY_INTERVAL;
             list_add_tail(&task->node, &pe->wait_list);
         } else if (pe->type == PEON_TYPE_CONNECT) {
-            /* If the connection task is successfully completed, add to 
+            /* If the connection task is successfully completed, add to
              * the recheck task list to periodically check the device.
              */
             need_free = false;
@@ -417,6 +439,7 @@ static void peon_task_complete(struct peon *pe, struct peon_task *task, int resu
         }
     }
 
+    pe->worker_all_count--;
     peon_unlock();
 
     if (need_free)
@@ -502,34 +525,6 @@ static int peon_worker_adjust_period(struct peon *pe)
     return period;
 }
 
-static void *peon_worker_thread(void *arg)
-{
-    int period;
-    struct peon_worker *worker = (struct peon_worker *)arg;
-    struct peon *pe = worker_to_peon(worker);
-
-    prctl(PR_SET_NAME, worker->name);
-    SNSD_PRINT(SNSD_INFO, "Start %s.", worker->name);
-
-    period = pe->normal_period;
-    while (!worker->stoped) {
-        waitq_waitevent_timeout(&worker->waitq, period);
-
-        if (worker->stoped)
-            break;
-
-        if (pe->type == PEON_TYPE_RECHECK)
-            peon_run_recheck(worker);
-        else
-            peon_task_proc(worker);
-
-        period = peon_worker_adjust_period(pe);
-    }
-
-    SNSD_PRINT(SNSD_INFO, "Exit %s.", worker->name);
-    return NULL;
-}
-
 static void peon_deconstruct(struct peon *pe)
 {
     int i;
@@ -562,8 +557,8 @@ static void peon_deconstruct(struct peon *pe)
     free(pe);
 }
 
-static struct peon *peon_construct(const struct peon_worker_env *env,
-                                   void *(*worker_routine)(void *))
+static struct peon *peon_construct(const struct peon_worker_env *env, void *(*worker_routine)(void *),
+                                   int peon_type, int sn)
 {
     int i;
     struct peon *pe;
@@ -578,30 +573,89 @@ static struct peon *peon_construct(const struct peon_worker_env *env,
     INIT_LIST_HEAD(&pe->proc_list);
 
     pe->worker_num = 0;
+    pe->worker_all_count = 0;
     pe->restrain_time = 0;
     pe->normal_period = env->normal_period;
     pe->fast_period = env->fast_period;
+    pe->peon_type = peon_type;
+
     for (i = 0; i < env->num; i++) {
         worker = &(pe->workers[i]);
 
         worker->index  = i;
         worker->stoped = false;
         waitq_init(&worker->waitq);
-        sprintf(worker->name, "%s-%d", env->name, i);
-        if (pthread_create(&worker->tid, NULL, worker_routine, worker)) {
-            SNSD_PRINT(SNSD_ERR, "Failed to create worker: %s.", strerror(errno));
-            goto out_fail;
+        if (peon_type == PEON_DYNAMIC) {
+            sprintf(worker->name, "%s-dyn-%d", env->name, sn);
+        } else {
+            sprintf(worker->name, "%s-%d", env->name, i);
         }
 
-        pe->worker_num++;
+        if (worker_routine != NULL) {
+            if (pthread_create(&worker->tid, NULL, worker_routine, worker)) {
+                SNSD_PRINT(SNSD_ERR, "Failed to create worker: %s.", strerror(errno));
+                goto out_fail;
+            }
+            pe->worker_num++;
+        }
     }
 
-    SNSD_PRINT(SNSD_INFO, "Peon construct success: name:%s num:%d.",
-        env->name, pe->worker_num);
+    SNSD_PRINT(SNSD_INFO, "[sn:%d]Peon construct success: name:%s num:%d.",
+        sn, env->name, pe->worker_num);
     return pe;
 
 out_fail:
     peon_deconstruct(pe);
+    return NULL;
+}
+
+static void *peon_worker_thread(void *arg)
+{
+    int period;
+    struct peon_worker *worker = (struct peon_worker *)arg;
+    struct peon *pe = worker_to_peon(worker);
+
+    prctl(PR_SET_NAME, worker->name);
+    SNSD_PRINT(SNSD_INFO, "Start %s.", worker->name);
+
+    period = pe->normal_period;
+    while (!worker->stoped) {
+        waitq_waitevent_timeout(&worker->waitq, period);
+
+        if (worker->stoped)
+            break;
+
+        if (pe->type == PEON_TYPE_RECHECK)
+            peon_run_recheck(worker);
+        else
+            peon_task_proc(worker);
+
+        period = peon_worker_adjust_period(pe);
+    }
+
+    SNSD_PRINT(SNSD_INFO, "Exit %s.", worker->name);
+    return NULL;
+}
+
+static void *peon_dynamic_disconn_thread(void *arg)
+{
+    struct peon_worker *worker = (struct peon_worker *)arg;
+    struct peon *pe = worker_to_peon(worker);
+
+    prctl(PR_SET_NAME, worker->name);
+
+    SNSD_PRINT(SNSD_INFO, "Start %s[cpu:%d time:%ld]", worker->name, peon_cpu(), times_sec());
+
+    peon_task_proc(worker);
+
+    /* execution is complete */
+    peon_deconstruct(pe);
+
+    peon_lock();
+    peon_dyn_worker_num--;
+    peon_unlock();
+
+    SNSD_PRINT(SNSD_INFO, "Exit %s.", worker->name);
     return NULL;
 }
 
@@ -623,6 +677,39 @@ void peon_exit(void)
     peon_exit_inner(PEON_NUM);
 }
 
+static struct peon_worker_env peon_dyn_worker_envs[] = {
+    {"peon/dbworker", PEON_DYN_DISCONN_WORKER_NUM, PEON_WORKER_PERIOD_NORMAL, PEON_WORKER_PERIOD_FAST},
+};
+
+struct peon *peon_dyn_create(int sn, struct peon_task *task)
+{
+    int restrain_time;
+    struct peon *dynamic_peons;
+    pthread_attr_t attr;
+
+    dynamic_peons = peon_construct(&peon_dyn_worker_envs[0], NULL, PEON_DYNAMIC, sn);
+    if (dynamic_peons == NULL)
+        return NULL;
+
+    dynamic_peons->type = PEON_TYPE_DISCONN;
+    restrain_time = snsd_cfg_get_restrain_time();
+    dynamic_peons->restrain_time = restrain_time;
+    dynamic_peons->worker_num = 1;
+    list_add_tail(&task->node, &dynamic_peons->wait_list);
+    dynamic_peons->worker_all_count = 1;
+
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, 1);
+    if (pthread_create(&dynamic_peons->workers[0].tid, &attr, peon_dynamic_disconn_thread, &(dynamic_peons->workers[0]))) {
+        SNSD_PRINT(SNSD_ERR, "Failed to create worker: %s.", strerror(errno));
+        list_del(&task->node);
+        peon_deconstruct(dynamic_peons);
+        return NULL;
+    }
+
+    return dynamic_peons;
+}
+
 static struct peon_worker_env peon_worker_envs[] = {
     {"peon/cworker",  PEON_CONNECT_WORKER_NUM, PEON_WORKER_PERIOD_NORMAL, PEON_WORKER_PERIOD_FAST},
     {"peon/dworker",  PEON_DISCONN_WORKER_NUM, PEON_WORKER_PERIOD_NORMAL, PEON_WORKER_PERIOD_FAST},
@@ -639,7 +726,7 @@ int peon_init(void)
     peon_lock_init();
 
     for (i = 0; i < PEON_NUM; i++) {
-        peons[i] = peon_construct(&peon_worker_envs[i], peon_worker_thread);
+        peons[i] = peon_construct(&peon_worker_envs[i], peon_worker_thread, PEON_STATIC, 0);
         if (peons[i] == NULL)
             goto out_deconstruct;
 

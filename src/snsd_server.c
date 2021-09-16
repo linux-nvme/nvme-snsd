@@ -588,7 +588,7 @@ static void snsd_buf_print(const char *key_words, const char *buf, int cnt)
     SNSD_PRINT(SNSD_DBG, "||========end========||");
 }
 
-static int snsd_get_msg_header(const char *buf, int len, int *tlv_len)
+static int snsd_get_msg_header(const char *buf, int len, int *tlv_len, unsigned char *ver)
 {
     nt_msg_header msg_headr;
     struct ethhdr eth_hdr;
@@ -619,6 +619,7 @@ static int snsd_get_msg_header(const char *buf, int len, int *tlv_len)
             msg_headr.ver);
         return -EACCES;
     }
+    *ver = msg_headr.ver;
     tlv_sum_len = ntohs(msg_headr.tlv_len);
     if ((tlv_sum_len == 0) || 
         (tlv_sum_len > len - (sizeof(nt_msg_header) + sizeof(struct ethhdr)))) {
@@ -733,26 +734,64 @@ static void snsd_get_client_seq(const char *buf, char type,
     return;
 }
 
+static bool snsd_check_msg_len(unsigned char ver, unsigned short len, 
+                               msg_len_info *len_info, unsigned short arry_len)
+{
+    unsigned short idx;
+    for (idx = 0; idx < arry_len; idx++) {
+        if (ver == len_info[idx].ver && len == len_info[idx].len)
+            return true;
+    }
+
+    return false;
+}
+
+static bool snsd_check_state_len(unsigned char ver, unsigned short len)
+{
+    msg_len_info len_info[] = {
+        {0, SNSD_NT_STATE_LEN_V0},
+        {1, SNSD_NT_STATE_LEN_V1}
+    };
+    return snsd_check_msg_len(ver, len, len_info, sizeof(len_info) / sizeof(msg_len_info));
+}
+
 static void snsd_get_client_state(const char *buf, char type,
                                   unsigned short len, nt_msg *msg)
 {
-    if (len != SNSD_NT_STATE_LEN) {
+    char *temp;
+    if (!snsd_check_state_len(msg->ver, len)) {
         return;
     }
+    temp = (char*)&msg->nt_msg.state_tlv.state + sizeof(msg->nt_msg.state_tlv.state) - len;
+    msg->nt_msg.state_tlv.state = 0;
+    memcpy(temp, buf, len);
+    msg->nt_msg.state_tlv.state = ntohl(msg->nt_msg.state_tlv.state);
     snsd_save_tl_info(type, len, &msg->nt_msg.state_tlv.tl);
-    memcpy((void*)&msg->nt_msg.state_tlv.state, (void*)buf, len);
     snsd_set_msg_valid_bit(&msg->map, type);
     return;
+}
+
+static bool snsd_check_reason_len(unsigned char ver, unsigned short len)
+{
+    msg_len_info len_info[] = {
+        {0, SNSD_NT_REASON_LEN_V0},
+        {1, SNSD_NT_REASON_LEN_V1}
+    };
+    return snsd_check_msg_len(ver, len, len_info, sizeof(len_info) / sizeof(msg_len_info));
 }
 
 static void snsd_get_nt_reason(const char *buf, char type,
                                unsigned short len, nt_msg *msg)
 {
-    if (len != SNSD_NT_REASON_LEN) {
+    char *temp;
+    if (!snsd_check_reason_len(msg->ver, len)) {
         return;
     }
+    temp = (char*)&msg->nt_msg.nt_reason_tlv.nt_reason + sizeof(msg->nt_msg.nt_reason_tlv.nt_reason) - len;
+    msg->nt_msg.nt_reason_tlv.nt_reason = 0;
+    memcpy(temp, buf, len);
+    msg->nt_msg.nt_reason_tlv.nt_reason = ntohl(msg->nt_msg.nt_reason_tlv.nt_reason);
     snsd_save_tl_info(type, len, &msg->nt_msg.nt_reason_tlv.tl);
-    memcpy((void*)&msg->nt_msg.nt_reason_tlv.nt_reason, (void*)buf, len);
     snsd_set_msg_valid_bit(&msg->map, type);
     return;
 }
@@ -976,7 +1015,7 @@ static void snsd_deal_one_msg(const struct snsd_host_ip *host_ip, nt_msg *msg)
 }
 
 static void snsd_decode_nt_tlv(const char *buf, int len,
-                               const struct snsd_host_ip *host_ip)
+                               const struct snsd_host_ip *host_ip, unsigned char ver)
 {
     nt_msg msg;
     unsigned char root_type;
@@ -985,6 +1024,8 @@ static void snsd_decode_nt_tlv(const char *buf, int len,
 
     do {
         memset((void*)&msg, 0, sizeof(msg));
+        msg.ver = ver;
+
         if ((root_pos + SNSD_TLV_TAG_SIZE) > len)
             break;
 
@@ -1022,10 +1063,11 @@ static void snsd_process_nt_msg(struct snsd_nt_rcv_msg *msg, int read_cnt,
 {
     int tlv_len, offset;
     int result;
+    unsigned char ver;
 
     snsd_buf_print("recv", msg->rcv_buf, read_cnt);
 
-    result = snsd_get_msg_header(msg->rcv_buf, read_cnt, &tlv_len);
+    result = snsd_get_msg_header(msg->rcv_buf, read_cnt, &tlv_len, &ver);
     if (result != 0) {
         snsd_buf_print("recv error", msg->rcv_buf, read_cnt);
         snsd_drop_msg_inc();
@@ -1034,7 +1076,7 @@ static void snsd_process_nt_msg(struct snsd_nt_rcv_msg *msg, int read_cnt,
 
     /* decode tlv msg format to tlv1--tlv8 */
     offset = sizeof(nt_msg_header) + sizeof(struct ethhdr);
-    snsd_decode_nt_tlv(msg->rcv_buf + offset, tlv_len, host_ip);
+    snsd_decode_nt_tlv(msg->rcv_buf + offset, tlv_len, host_ip, ver);
     
     return;        
 }

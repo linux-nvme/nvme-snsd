@@ -277,6 +277,42 @@ void switch_get_fd(struct snsd_port_info *port_info,
         lldp_info->valid = 1;
 }
 
+void snsd_zone_query_send(int query_fd, struct snsd_port_info *port, struct snsd_query_zone_tlv *query_tlv)
+{
+    int ret;
+
+    ret = send(query_fd, query_tlv, sizeof(struct snsd_query_zone_tlv), 0) != sizeof(struct snsd_query_zone_tlv);
+    if (ret != 0) {
+        SNSD_PRINT(SNSD_ERR, "Send error:%s for eth name:%s, ip:"SNSD_IPV4STR", fd:%d", 
+            strerror(errno), port->name, SNSD_IPV4_FORMAT(port->ip), query_fd);
+        return;
+    }
+
+    SNSD_PRINT(SNSD_INFO, "Send query msg for eth %s, ip:"SNSD_IPV4STR", success", 
+        port->name, SNSD_IPV4_FORMAT(port->ip));
+    return;
+}
+
+void snsd_zone_query_send_bonding(struct snsd_port_info *port, struct snsd_query_zone_tlv *query_tlv)
+{
+    struct slave_info *slave = port->bonding.slave;
+    int ret;
+
+    while(slave) {
+        ret = send(slave->fd, query_tlv, sizeof(struct snsd_query_zone_tlv), 0) != sizeof(struct snsd_query_zone_tlv);
+        if (ret != 0) {
+            SNSD_PRINT(SNSD_ERR, "Send error:%s for bond name:%s, slave %s, ip:"SNSD_IPV4STR", fd:%d", 
+            strerror(errno), port->name, port->bonding.slave->slave_name, (port->ip), slave->fd);
+            return;
+        }
+        slave = slave->slave_next;
+    }
+
+    SNSD_PRINT(SNSD_INFO, "Send query msg for bond %s, ip:"SNSD_IPV4STR", success", 
+        port->name, SNSD_IPV4_FORMAT(port->ip));
+    return;
+}
+
 void snsd_query_zone_for_port(int query_fd, struct snsd_port_info *port)
 {
     struct snsd_query_zone_tlv query_tlv;
@@ -285,12 +321,10 @@ void snsd_query_zone_for_port(int query_fd, struct snsd_port_info *port)
         return;
 
     snsd_build_query_tlv(port, &query_tlv);
-    if (send(query_fd, &query_tlv, sizeof(struct snsd_query_zone_tlv), 0) != sizeof(struct snsd_query_zone_tlv)) {
-        SNSD_PRINT(SNSD_ERR, "Send error:%s for eth name:%s, ip:"SNSD_IPV4STR", fd:%d", 
-            strerror(errno), port->name, SNSD_IPV4_FORMAT(port->ip), query_fd);
+    if (port->bonding.bonding_states & STATE_BONDING_VALID) {
+        snsd_zone_query_send_bonding(port, &query_tlv);
     } else {
-        SNSD_PRINT(SNSD_INFO, "Send query msg for eth %s, ip:"SNSD_IPV4STR", success", 
-            port->name, SNSD_IPV4_FORMAT(port->ip));
+        snsd_zone_query_send(query_fd, port, &query_tlv);
     }
 
     return;
@@ -356,6 +390,7 @@ void switch_port_exist_handle(struct snsd_net_info *net_info)
                        port_info, port_info->name, port_info->flags,
                        lldp_info->expires, now);
             switch_check_lldp_send(lldp_info, port_info, now);
+
             snsd_query_zone_for_port(lldp_info->fd, port_info);
         }
         /* if can not get fd wait next retry */

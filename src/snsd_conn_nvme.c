@@ -1,19 +1,19 @@
 /*
  * BSD 3-Clause License
- * 
+ *
  * Copyright (c) [2020], [Huawei Technologies Co., Ltd.]
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright notice, this
  *    list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
@@ -161,6 +161,8 @@ static enum snsd_nvme_ctrl_state snsd_nvme_ctrl_find(
         /* Skip the discovery device. */
         if (snsd_nvme_ctrl_is_discovery(&nctx))
             continue;
+        if (strstr(nctx.subsysnqn, "null"))
+            continue;
 
         if (!snsd_nvme_ctrl_match(ctx, &nctx))
             continue;
@@ -283,7 +285,7 @@ static void snsd_nvme_disc_refurbish_log(struct nvmf_disc_rsp_page_hdr *log_page
 
     for (i = 0; i < log_page->numrec; i++) {
         struct nvmf_disc_rsp_page_entry *entry = &log_page->entries[i];
-        
+
         snsd_strip_tail_space(entry->trsvcid, NVMF_TRSVCID_SIZE);
         snsd_strip_tail_space(entry->traddr, NVMF_TRADDR_SIZE);
     }
@@ -301,7 +303,7 @@ static void snsd_nvme_disc_show_log(struct nvmf_disc_rsp_page_hdr *log_page)
 
         SNSD_PRINT(SNSD_DBG, "[REC:%d] TRTYPE:%d ADRFAM:%d"
             " SUBTYPE:%d PORTID:%d CNTLID:%d TRSVCID:%s TRADDR:%s",
-            i, entry->trtype, entry->adrfam, entry->subtype, 
+            i, entry->trtype, entry->adrfam, entry->subtype,
             entry->portid, entry->cntlid, entry->trsvcid, entry->traddr);
     }
 }
@@ -360,11 +362,11 @@ static int snsd_nvme_disc_get_log(const char *arg_buf,
     ret = snprintf(dname, SNSD_DEVICE_NAME_SIZE, "nvme%d", instance);
     if (ret < 0)
         return -EINVAL;
-    
+
     ret = snprintf(dpath, SNSD_DEVICE_PATH_SIZE, "/dev/%s", dname);
     if (ret < 0)
         return -EINVAL;
-    
+
     ret = nvme_discovery_log(dpath, log_page);
     if (ret != 0) {
         SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
@@ -382,7 +384,7 @@ out_remove:
     return ret;
 }
 
-static int snsd_nvme_add_argument(char **argstr, int *max_len, char *cfg_para_val, char *base_para_val, 
+static int snsd_nvme_add_argument(char **argstr, int *max_len, char *cfg_para_val, char *base_para_val,
     char *para_name)
 {
     int len = 0;
@@ -401,7 +403,7 @@ static int snsd_nvme_add_argument(char **argstr, int *max_len, char *cfg_para_va
     return 0;
 }
 
-static int snsd_nvme_add_int_argument(char **argstr, int *max_len, int cfg_para_val, int base_para_val, 
+static int snsd_nvme_add_int_argument(char **argstr, int *max_len, int cfg_para_val, int base_para_val,
     char *para_name)
 {
     int len = 0;
@@ -420,7 +422,7 @@ static int snsd_nvme_add_int_argument(char **argstr, int *max_len, int cfg_para_
     return 0;
 }
 
-static int snsd_nvme_add_noarg_argument(char **argstr, int *max_len, int cfg_para_val, int base_para_val, 
+static int snsd_nvme_add_noarg_argument(char **argstr, int *max_len, int cfg_para_val, int base_para_val,
     char *para_name)
 {
     int len = 0;
@@ -460,14 +462,14 @@ static int snsd_nvme_add_hostnqn(char **argstr, int *max_len, char *cfg_hostnqn,
     return 0;
 }
 
-static bool snsd_nvme_fill_arg(char *argstr, struct snsd_cfg_infos *cfg_info, struct snsd_base_cfg *base_info, 
+static bool snsd_nvme_fill_arg(char *argstr, struct snsd_cfg_infos *cfg_info, struct snsd_base_cfg *base_info,
     struct snsd_nvme_ctx *ctx)
 {
     int len;
     int max_len = SNSD_BUF_SIZE;
     char *begin = argstr;
 
-    len = snprintf(argstr, SNSD_BUF_SIZE, "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s,nqn=%s", 
+    len = snprintf(argstr, SNSD_BUF_SIZE, "traddr=%s,host_traddr=%s,transport=%s,trsvcid=%s,nqn=%s",
         ctx->traddr, ctx->host_traddr, ctx->transport, ctx->trsvcid, ctx->subsysnqn);
     if (len < 0)
         return false;
@@ -475,29 +477,29 @@ static bool snsd_nvme_fill_arg(char *argstr, struct snsd_cfg_infos *cfg_info, st
     max_len -= len;
 
     if (snsd_nvme_add_hostnqn(&argstr, &max_len, cfg_info->hostnqn, "hostnqn") ||
-        snsd_nvme_add_argument(&argstr, &max_len, cfg_info->hostid, 
+        snsd_nvme_add_argument(&argstr, &max_len, cfg_info->hostid,
             base_info->hostid, "hostid") ||
-        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->nr_io_queues, 
+        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->nr_io_queues,
             base_info->nr_io_queues, "nr_io_queues") ||
-        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->nr_write_queues, 
+        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->nr_write_queues,
             base_info->nr_write_queues, "nr_write_queues") ||
-        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->nr_poll_queues, 
+        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->nr_poll_queues,
             base_info->nr_poll_queues, "nr_poll_queues") ||
-        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->queue_size, 
+        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->queue_size,
             base_info->queue_size, "queue_size") ||
-        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->keep_alive_tmo, 
+        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->keep_alive_tmo,
             base_info->keep_alive_tmo, "keep_alive_tmo") ||
-        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->reconnect_delay, 
+        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->reconnect_delay,
             base_info->reconnect_delay, "reconnect_delay") ||
-        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->ctrl_loss_tmo, 
+        snsd_nvme_add_int_argument(&argstr, &max_len, cfg_info->ctrl_loss_tmo,
             base_info->ctrl_loss_tmo, "ctrl_loss_tmo") ||
-        snsd_nvme_add_noarg_argument(&argstr, &max_len, cfg_info->duplicate_connect, 
+        snsd_nvme_add_noarg_argument(&argstr, &max_len, cfg_info->duplicate_connect,
             base_info->duplicate_connect, "duplicate_connect") ||
-        snsd_nvme_add_noarg_argument(&argstr, &max_len, cfg_info->disable_sqflow, 
+        snsd_nvme_add_noarg_argument(&argstr, &max_len, cfg_info->disable_sqflow,
             base_info->disable_sqflow, "disable_sqflow") ||
-        snsd_nvme_add_noarg_argument(&argstr, &max_len, cfg_info->hdr_digest, 
+        snsd_nvme_add_noarg_argument(&argstr, &max_len, cfg_info->hdr_digest,
             base_info->hdr_digest, "hdr_digest") ||
-        snsd_nvme_add_noarg_argument(&argstr, &max_len, cfg_info->data_digest, 
+        snsd_nvme_add_noarg_argument(&argstr, &max_len, cfg_info->data_digest,
             base_info->data_digest, "data_digest"))
         return false;
 
@@ -676,7 +678,7 @@ static bool snsd_nvme_ctx_nessary_init(struct snsd_connect_param *vparam, unsign
         inet_ntop(vparam->family, vparam->host_traddr,
                   ctx->host_traddr, SNSD_NVME_TRADDR_LEN) == NULL)
         goto out;
-    
+
     ctx->protocol = vparam->protocol;
     ctx->mode = vparam->mode;
 
@@ -732,7 +734,7 @@ out:
 static void snsd_nvme_ctx_reinit(void *vctx, unsigned long sn)
 {
     struct snsd_nvme_ctx *ctx = (struct snsd_nvme_ctx *)vctx;
-    
+
     memset(ctx->dname, 0, sizeof(ctx->dname));
     snsd_nvme_ctx_show(ctx, sn);
     return;
@@ -845,6 +847,30 @@ out:
     return ret;
 }
 
+static void snsd_nvme_retry_keep_alive(char *dpath, struct snsd_nvme_ctx *ctx, unsigned long sn)
+{
+    int ret;
+    int index;
+
+    for (index = 0; index < SNSD_NVME_KEEPALIVE_RETRY_TIMES; index++) {
+        usleep(SNSD_NVME_KEEPALIVE_RETRY_INTERVAL);
+        ret = nvme_keep_alive(dpath, SNSD_NVME_KEEPALIVE_RETRY_TIMES);
+        if (ret) {
+            SNSD_PRINT(SNSD_INFO, "[sn:%ld] ["SNSD_NVME_LOG_CTRL_ADDDR"] "
+                "Retry send keep alive, ret:%d retry times:%d.",
+                sn, ctx->traddr, ctx->host_traddr, ctx->transport,
+                ctx->trsvcid, ret, index + 1);
+            return;
+        }
+    }
+
+    SNSD_PRINT(SNSD_INFO, "[sn:%ld] ["SNSD_NVME_LOG_CTRL_ADDDR"] "
+                "Retry send keep alive end, retry max times:%d.",
+                sn, ctx->traddr, ctx->host_traddr, ctx->transport,
+                ctx->trsvcid, SNSD_NVME_KEEPALIVE_RETRY_TIMES);
+    return;
+}
+
 static int snsd_nvme_disconnect(void *vctx, int action_flag, unsigned long sn)
 {
     int ret;
@@ -860,19 +886,21 @@ static int snsd_nvme_disconnect(void *vctx, int action_flag, unsigned long sn)
         if (ret < 0)
             return 0;
 
-        /* Send a KEEP ALIVE command for disconnect task. If the network is 
-         * normal, KEEP ALIVE will return success, will be no any impact. If 
-         * the network is abnormal, KEEP ALIVE will trigger controller reset 
+        /* Send a KEEP ALIVE command for disconnect task. If the network is
+         * normal, KEEP ALIVE will return success, will be no any impact. If
+         * the network is abnormal, KEEP ALIVE will trigger controller reset
          * due to I/O timeout.
          */
+        SNSD_PRINT(SNSD_INFO, "[sn:%ld] ["SNSD_NVME_LOG_CTRL_ADDDR"] "
+            "Begin send keep alive to %s.",
+            sn, ctx->traddr, ctx->host_traddr, ctx->transport,
+            ctx->trsvcid, dname);
         ret = nvme_keep_alive(dpath, SNSD_NVME_KEEPALIVE_TIMEO);
-
         state = snsd_nvme_ctrl_find(ctx, NULL, 0);
         SNSD_PRINT(SNSD_INFO, "[sn:%ld] ["SNSD_NVME_LOG_CTRL_ADDDR"] "
             "Send keep alive to %s, ret:%d state:%d.",
             sn, ctx->traddr, ctx->host_traddr, ctx->transport,
             ctx->trsvcid, dname, ret, state);
-        
         if (action_flag & SNSD_DISCONNECT_FORCEDLY &&
             state == SNSD_NVME_CTRL_STATE_LIVE) {
             ret = snsd_nvme_ctrl_remove(dname);
@@ -881,6 +909,8 @@ static int snsd_nvme_disconnect(void *vctx, int action_flag, unsigned long sn)
                 "Remove device(%s), ret:%d.",
                 sn, ctx->traddr, ctx->host_traddr, ctx->transport,
                 ctx->trsvcid, dname, ret);
+        } else if (!ret) {
+            snsd_nvme_retry_keep_alive(dpath, ctx, sn);
         }
     } else
         SNSD_PRINT(SNSD_INFO, "[sn:%ld] ["SNSD_NVME_LOG_CTRL_ADDDR"] "
