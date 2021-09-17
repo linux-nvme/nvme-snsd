@@ -3,7 +3,7 @@
 Name:nvme-snsd
 Version:%{_VERSION}
 Release:linux
-Summary:Huawei PANGEA nvme-snsd
+Summary:Huawei nvme-snsd
 Vendor:Huawei
 License: Share
 Group:Applications/System

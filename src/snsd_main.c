@@ -89,7 +89,7 @@ void special_process(const char *argv)
     };
     int i;
     int size = sizeof(commands) / sizeof(struct usr_command);
-    
+
     for (i = 0; i < size && commands[i].cmd_handle != NULL; i++) {
         if (strcmp(commands[i].cmd, argv) == 0) {
             commands[i].cmd_handle();
@@ -98,8 +98,8 @@ void special_process(const char *argv)
     }
 
     print_info("snsd: unrecognized option '%s'.", argv);
-    print_info("Use 'smartdiscovery --help' for a complete list of options.");
-    print_info("Use 'smartdiscovery --version' for checking the software version.");
+    print_info("Use 'nvme-snsd --help' for a complete list of options.");
+    print_info("Use 'nvme-snsd --version' for checking the software version.");
 
     return;
 }
@@ -141,7 +141,7 @@ int main(int argc, char *argv[])
         special_process(argv[1]);
         return -EINVAL;
     }
-    
+
     snsd_log_init();
     SNSD_PRINT(SNSD_INFO, "SNSD VERSION: %s", SNSD_VERSION);
 
@@ -154,9 +154,9 @@ int main(int argc, char *argv[])
         snsd_cfg_exit();
         return ret;
     }
-    
+
     switch_port_init();
-    
+
     ret = snsd_server_run();
     if (ret != 0) {
         peon_exit();
@@ -171,6 +171,6 @@ int main(int argc, char *argv[])
     peon_exit();
     snsd_cfg_exit();
     snsd_log_exit();
-    
+
     return 0;
 }

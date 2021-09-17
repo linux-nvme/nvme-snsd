@@ -626,12 +626,12 @@ static struct snsd_net_info *snsd_try_find_old(struct list_head *list_head,
         if (cur_item == NULL)
             return NULL;
 
-    	cur_item->port_info.states |= STATE_NEW_PORT;
+        cur_item->port_info.states |= STATE_NEW_PORT;
         cur_item->port_info.count = count - 1;
         cur_item->port_info.vlan = SNSD_INVALID_VLAN;
         list_add_tail(&cur_item->list, list_head);
     } else {
-    	cur_item->port_info.states &= ~STATE_NEW_PORT;
+        cur_item->port_info.states &= ~STATE_NEW_PORT;
     }
     
     return cur_item;
@@ -798,7 +798,6 @@ static bool snsd_protocol_ib(struct snsd_net_info *cur_net)
     struct dirent *dirp;
     char dir_path[SNSD_CFG_VALUE_MAX_LEN + 1];
     struct bonding_info *bonding = &cur_net->port_info.bonding;
-    int count = 0;
     int ret;
 
     if (!(cur_net->port_info.states & STATE_NEW_PORT)) {
@@ -829,12 +828,8 @@ static bool snsd_protocol_ib(struct snsd_net_info *cur_net)
 
         ret = snsd_check_ib_one_port(cur_net, dir_path);
         if (ret != 0) {
-            count++;
-            if (!(bonding->bonding_states & STATE_BONDING_VALID) ||
-                count >= bonding->slaves_count) {
-                closedir(dp);
-                return true;
-            }
+            closedir(dp);
+            return true;
         }
     }
     closedir(dp);
