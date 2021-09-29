@@ -1,3 +1,4 @@
+# redme
 # README
 
 ## Nvme-snsd  
@@ -8,7 +9,7 @@ Run:
 ```
 $./build/build_arm.sh  
 or  
-$./build/ build_x86_64.sh  
+$./build/build_x86_64.sh  
 ```
 ### To install:  
 Step1:Create a configuration file.  
@@ -37,9 +38,57 @@ Step1:Create a configuration file.
     ;  --host-traddr = xxxx | --traddr = xxxx | --protocol = (roce/tcp/iscsi)  
     --host-traddr = 123.2.1.122 | --traddr = 1.1.1.2 | --protocol = roce  
     --host-traddr = 2.30.10.2 | --traddr = 1.1.1.2 | --protocol = roce
-- [BASE] field: Configures the timeout interval delivered to the driver when the link is disconnected. By default, you do not need to configure the timeout interval.  
-- [SW] field: Configures IP addresses and protocols for the hosts on the switching network to support the NVMe over fabric.  
-- [DC] field: Configures IP addresses, corresponding array IP addresses, and protocols for the hosts on the direct connection network to support the NVMe over fabric.  
+    Each line indicates a complete connection configuration. Each configuration item is separated by a vertical bar (|). 
+    The configuration consists of three parts: BASE, SW, and DC. 
+        BASE: The restrain time of disconnecting device when net link down. Unit is second.
+
+        SW: Switching network. Configure the IP address of the host that supports plug-and-play and fast detection. 
+            --host-traddr = any: All customer networks support SNSD by default. 
+
+        DC: Direct network: Configure host information and storage array information that support plug-and-play and quick detection. 
+            Note: The value is not affected by any. 
+
+###### Configuration Item:
+    The following parameters are supported in the BASE field (some optional parameters depend on the NVMe driver version):
+        --restrain-time     Indicates the delay for disconnecting a device when the network link is disconnected. The unit is second. This parameter is optional.
+        --trsvcid           Specifies the port number of the TGT. This parameter is optional.
+        --hostnqn           Indicates the hostnqn. This parameter is optional.
+        --hostid            Specifies the host ID. This parameter is optional.
+        --nr-io-queues      Specifies the number of I/O queues. This parameter is optional.
+        --nr-write-queues   Specifies the number of write queues. This parameter is optional.
+        --nr-poll-queues    Indicates the number of poll queues. This parameter is optional.
+        --queue-size        Specifies the I/O queue depth. This parameter is optional.
+        --keep-alive-tmo    Specifies the heartbeat timeout interval. This parameter is optional.
+        --reconnect-delay   Indicates the retry interval after link disconnection. This parameter is optional.
+        --ctrl-loss-tmo     Specifies the controller disconnection time. This parameter is optional.
+        --duplicate_connect Specifies whether multiple connections can be set up on a port. This parameter is optional.
+        --disable_sqflow    Cancels SQ flow control on a host. This parameter is optional.
+        --hdr_digest        Enables the transmission protocol header. This parameter is optional.
+        --data_digest       Enables the transmission protocol data. This parameter is optional.
+        --standard          Set special standard, eg: CMCC, ODCC, default value is ODCC. This parameter is optional.
+
+    The following parameters are supported in the SW/DC field (some optional parameters depend on the NVMe driver version):
+        --traddr            Specifies the IP address of the TGT. This parameter is mandatory for the DC field and not supported by the SW field.
+        --trsvcid           Specifies the port number of the TGT. This parameter is optional.
+        --host-traddr       Specifies the IP address used by the host. This parameter is mandatory.
+        --hostnqn           Indicates the hostnqn. This parameter is optional.
+        --hostid            Specifies the host ID. This parameter is optional.
+        --nr-io-queues      Specifies the number of I/O queues. This parameter is optional.
+        --nr-write-queues   Specifies the number of write queues. This parameter is optional.
+        --nr-poll-queues    Indicates the number of poll queues. This parameter is optional.
+        --queue-size        Specifies the I/O queue depth. This parameter is optional.
+        --keep-alive-tmo    Specifies the heartbeat timeout interval. This parameter is optional.
+        --reconnect-delay   Indicates the retry interval after link disconnection. This parameter is optional.
+        --ctrl-loss-tmo     Specifies the controller disconnection time. This parameter is optional.
+        --duplicate_connect Specifies whether multiple connections can be set up on a port. This parameter is optional.
+        --disable_sqflow    Cancels SQ flow control on a host. This parameter is optional.
+        --hdr_digest        Enables the transmission protocol header. This parameter is optional.
+        --data_digest       Enables the transmission protocol data. This parameter is optional.
+        --protocol          Indicates the transmission protocol type. The value can be RoCE, TCP, or iSCSI. Currently, only RoCE is supported. This parameter is mandatory.
+
+- [BASE] field: Configures the base config which used by DC and SW, If the DC or SW has the same configuration type, the DC or SW configuration takes precedence.
+- [SW] field: Configure IP addresses, protocols, and link parameters for hosts on the switching network to support NVMe over fabric.
+- [DC] field: Configures IP addresses, corresponding array IP addresses, protocols , and link parametersfor the hosts on the direct connection network to support the NVMe over fabric.  
 
 Step2: Run  `$ rpm -ivh nvme-snsd-x.xx.xxx-linux.xxxxx.rpm`  
 
