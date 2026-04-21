@@ -4,6 +4,8 @@ CFLAGS += -fPIE -pie
 CFLAGS += -Wl,-z,relro
 CFLAGS += -Wl,-z,now
 CFLAGS += -Wl,-z,noexecstack
+CFLAGS += -Wno-stringop-truncation
+CFLAGS += -s
 
 RM = rm -f
 SNSD = nvme-snsd

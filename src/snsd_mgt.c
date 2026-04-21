@@ -491,9 +491,8 @@ static int snsd_get_mix_info(struct snsd_net_info *cur_item,
                                    bonding_group,ifreq.ifr_name);
         if (ret != 0)
             return ret;
-        memcpy(port_info->phy_name, ifreq.ifr_name,
-               sizeof(port_info->phy_name));
     }
+    memcpy(port_info->phy_name, ifreq.ifr_name, sizeof(port_info->phy_name));
 
     if (port_info->vlan != vlan) {
         if (port_info->vlan != SNSD_INVALID_VLAN)
@@ -520,6 +519,12 @@ static inline int snsd_get_bonding_info(struct snsd_bonding_group *bonding_group
     int count;
     int i;
     int length;
+
+	if ((access(SNSD_BONDING_FILE_PATH, F_OK) != 0)) {
+		bonding_group->bonding_info = NULL;
+		bonding_group->count = 0;
+		return 0;
+	}
 
     length = snsd_get_file_info(SNSD_BONDING_FILE_PATH, &bonding_info);
     if (length < 0)
@@ -550,7 +555,10 @@ static inline int snsd_get_bonding_info(struct snsd_bonding_group *bonding_group
 
 static inline int snsd_get_vlan_info(char **vlan_info)
 {
-    return snsd_get_file_info(SNSD_VLAN_FILE_PATH, vlan_info);
+    if ((access(SNSD_VLAN_FILE_PATH, F_OK) == 0)) {
+        return snsd_get_file_info(SNSD_VLAN_FILE_PATH, vlan_info);
+    }
+    return 0;
 }
 
 static struct snsd_net_info *snsd_get_new(struct ifreq *ifr)
@@ -683,17 +691,12 @@ static int snsd_get_net_info(struct list_head *list_head, unsigned int count,
     int vlan_length;
     int ret;
 
-    if ((access(SNSD_BONDING_FILE_PATH, F_OK) == 0)) {
-        ret = snsd_get_bonding_info(&bonding_group);
-        if (ret != 0)
-            return ret;
-    } else {
-        bonding_group.bonding_info = NULL;
-        bonding_group.count = 0;
-    }
+    ret = snsd_get_bonding_info(&bonding_group);
+    if (ret != 0)
+        return ret;
 
     vlan_length = snsd_get_vlan_info(&vlan_info);
-    if (vlan_length <= 0) {
+    if (vlan_length < 0) {
         snsd_free_bonding_info(&bonding_group);
         return -EAGAIN;
     }
@@ -722,20 +725,9 @@ static int snsd_get_net_info(struct list_head *list_head, unsigned int count,
             if (ret != 0)
                 break;
 
-            /* vlan must valid */
-            if (net_info->port_info.vlan == SNSD_INVALID_VLAN) {
-                SNSD_LIMIT_PRINT(SNSD_DBG, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-                    "host:%u.%u.%u.%u, vlan is invalid.",
-                    SNSD_IPV4_FORMAT(net_info->port_info.ip));
-                if (net_info->port_info.states & STATE_NEW_PORT) {
-                    list_del(&net_info->list);
-                    snsd_free_netinfo(net_info);
-                }
-            } else {
-                net_info->port_info.protocol = snsd_get_any_protocol();
-                /* update count flag */
-                net_info->port_info.count = count;
-            }
+            net_info->port_info.protocol = snsd_get_any_protocol();
+            /* update count flag */
+            net_info->port_info.count = count;
         }
     }
 
@@ -771,8 +763,7 @@ static bool snsd_check_ib_one_port(struct snsd_net_info *cur_net,
 
     bonding = &cur_net->port_info.bonding;
     while ((net_dirp = readdir(net_dp)) != NULL) {
-        if (strcmp(net_dirp->d_name, ".") == 0 ||
-            strcmp(net_dirp->d_name, "..") == 0)
+        if (net_dirp->d_name[0] == '.')
             continue;
 
         if (bonding->bonding_states & STATE_BONDING_VALID) {
@@ -835,8 +826,8 @@ static bool snsd_protocol_ib(struct snsd_net_info *cur_net)
     closedir(dp);
 
     SNSD_LIMIT_PRINT(SNSD_ERR, LOG_LIMIT_C3, SNSD_LOG_PRINT_CYCLE,
-        "Host:"SNSD_IPV4STR", ib protocol check failed.", 
-        SNSD_IPV4_FORMAT(cur_net->port_info.ip));
+        "Host:"SNSD_IPV4STR", phy_name %s, ib protocol check failed.",
+        SNSD_IPV4_FORMAT(cur_net->port_info.ip), cur_net->port_info.phy_name);
 
     return false;
 }
